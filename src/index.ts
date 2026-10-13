@@ -21,6 +21,7 @@
 import { Plugin } from "@opencode/plugin"
 
 import { registerTools } from "./tools/index.js"
+import { registerInjectionProbe } from "./runtime/injection-probe.js"
 import { evidence, diagnosticsEnabled } from "./runtime/diagnostics.js"
 
 /** 插件 id（宿主用于去重与日志；同一 id 不得重复注册） */
@@ -67,12 +68,15 @@ export const SerenityPlugin = Plugin.define({
 
     // ── 阶段 2：注入面（会话级，按会话判定 CCC）────────────────
     // 见 docs/v2-capability-mapping.md §1：落点 = ctx.session.hook("context", …)
-    // Phase 2 接入。
+    const injectionDisposers = await registerInjectionProbe(ctx).catch((e) => {
+      if (diag) evidence("injection-error", { error: String(e) })
+      return []
+    })
 
     // ── 阶段 3：cleanup ────────────────────────────────────────
     return async () => {
       // 逆序释放；单个失败不阻断其余（清理必须尽力而为）
-      for (const dispose of [...disposers].reverse()) {
+      for (const dispose of [...injectionDisposers, ...disposers].reverse()) {
         try {
           await dispose()
         } catch {

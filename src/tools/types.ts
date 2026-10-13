@@ -29,3 +29,14 @@ export interface ToolRegistrar {
     transform(callback: (editor: ToolEditor) => void): Promise<Registration>
   }
 }
+
+/** session.hook 的注册面（注入面用） */
+export interface SessionHookRegistrar {
+  session: {
+    hook(
+      name: "context",
+      callback: (input: unknown) => Promise<void> | void,
+    ): Promise<Registration>
+  }
+}
+
