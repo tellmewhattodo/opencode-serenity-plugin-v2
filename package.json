@@ -1,0 +1,48 @@
+{
+  "name": "@shgroup/opencode-serenity-plugin-v2",
+  "version": "0.1.0",
+  "private": false,
+  "description": "Serenity — 为 OpenCode v2 Agent 提供认知容器 (CCC) 基础设施。基于 @opencode/plugin v2 API（Plugin.define + Context 域）。",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "docs"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "clean": "rm -rf dist coverage *.tsbuildinfo"
+  },
+  "keywords": [
+    "opencode",
+    "plugin",
+    "v2",
+    "serenity",
+    "acc",
+    "ccc"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "peerDependencies": {
+    "@opencode/plugin": "^2.0.0"
+  },
+  "devDependencies": {
+    "@opencode/plugin": "2.0.28",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  }
+}

@@ -1,0 +1,11 @@
+# 依赖与构建产物（不入库）
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# 编辑器与系统
+.DS_Store
+.vscode/
+.idea/
+*.log
