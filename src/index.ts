@@ -22,6 +22,7 @@ import { Plugin } from "@opencode/plugin"
 
 import { registerTools } from "./tools/index.js"
 import { registerInjection } from "./runtime/injection.js"
+import { detectContainer } from "./runtime/ccc.js"
 import { evidence, diagnosticsEnabled } from "./runtime/diagnostics.js"
 import { PLUGIN_ID } from "./version.js"
 
@@ -41,9 +42,13 @@ export const SerenityPlugin = Plugin.define({
     }
 
     // ── 阶段 1：工具面注册（宿主级，不依赖 CCC 判定）────────────
+    // 工具在 execute 时用 ToolContext.sessionID 解析 CCC 根（注册期拿不到会话）
     let disposers: Array<() => Promise<void> | void> = []
     try {
-      disposers = await registerTools(ctx)
+      disposers = await registerTools(ctx, async (sessionID: string) => {
+        const cc = await detectContainer(ctx, sessionID)
+        return cc.isContainer ? cc.root : null
+      })
       if (diag) {
         // 自证：读回宿主实际注册的工具清单（机械证据，非自述）
         const registered = await ctx.tool.list()

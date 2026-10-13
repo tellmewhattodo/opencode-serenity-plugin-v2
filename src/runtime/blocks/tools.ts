@@ -11,9 +11,12 @@
  *    ⚠️ 这是**过渡态**：9 个契约工具全部实现后，本块应恢复 specs 的完整清单。
  */
 
-/** 已实现的工具行（随实现推进而增补） */
+/** 已实现的工具行（随实现推进而增补；镜像纪律：与实现逐字一致） */
 const IMPLEMENTED_TOOL_LINES: string[] = [
+  "  container_fs — container filesystem operations (15 subcommands: root/resolve/exists/list/tree/relative/mkdir/rm/mv/cp/touch/append/reveal/info/find)",
+  "  container_git— git operations (status/commit/push/log; commit auto-pushes unless noPush; paths limits the commit; push success requires a ref line from --porcelain)",
   "  dashboard    — always-on container instruments: health (CCC three-principle check + registry integrity) / time (now) / wait (N seconds)",
+  "  msm          — execute a registered CCC MSM: msm(name, args); partial name returns candidates; inspect=true shows usage",
 ]
 
 /** msm 调用协议（4 行，specs §5.8 要求） */

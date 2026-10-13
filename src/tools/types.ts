@@ -30,6 +30,14 @@ export interface ToolRegistrar {
   }
 }
 
+/**
+ * CCC 根解析器（运行时按 sessionID 求值）。
+ *
+ * 为什么是函数而非字符串：注册期拿不到会话（见 tools/index.ts 顶部说明）。
+ * 返回 null ⇒ 该会话不在 CCC 内 ⇒ 工具应拒绝执行。
+ */
+export type RootResolver = (sessionID: string) => Promise<string | null>
+
 /** session.hook 的注册面（注入面用） */
 export interface SessionHookRegistrar {
   session: {
