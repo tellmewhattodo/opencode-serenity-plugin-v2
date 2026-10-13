@@ -9,11 +9,13 @@
  *   - transform 是**可重放**的：域重建时从干净状态按注册顺序重跑
  *   - 因此 editor.add 必须是**幂等且廉价**的（不得在其中做 IO）
  *
- * 本文件只做装配：具体工具实现在 ./<name>.ts
+ * 🔴 **注册与 CCC 判定解耦**（实测教训）：
+ *   工具注册在**宿主级**，与会话无关；`ctx.location` 是插件实例位置，**不是**会话位置
+ *   ⇒ 此处**不做** CCC 判定，激活语义下沉到会话级（注入面）。
+ *   理由与证据见 `docs/v2-capability-mapping.md` §9。
  */
 
 import type { ToolRegistrar } from "./types.js"
-import type { ContainerInfo } from "../runtime/container.js"
 
 import { createDashboardTool } from "./dashboard.js"
 
@@ -24,11 +26,10 @@ import { createDashboardTool } from "./dashboard.js"
  */
 export async function registerTools(
   ctx: ToolRegistrar,
-  container: ContainerInfo,
 ): Promise<Array<() => Promise<void> | void>> {
   const tools = [
     // ── 常驻最小公共集（specs §4.1）──────────────────
-    createDashboardTool(container),
+    createDashboardTool(),
     // 后续：container_fs / container_git / container_trajectory / msm /
     //       container_admin / praxis / ontology / serenity-skill-creator /
     //       handyman / localstore

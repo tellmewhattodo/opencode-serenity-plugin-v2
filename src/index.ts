@@ -4,19 +4,24 @@
  * 基于 @opencode/plugin@2.x 的 v2 插件 API：
  *   Plugin.define({ id, setup(ctx) })  →  ctx 是 26 域的 Context
  *
- * 本文件 = 装配层（composition root）：
- *   1. 探测/记录运行时环境（CCC 根、safe-mode）
- *   2. 注册工具面（ctx.tool.transform）
- *   3. 装载注入面 / 机制面（后续 Phase 接入）
- *   4. 返回 cleanup（插件卸载时执行）
+ * 🎯 架构要点（实测得出，见 docs/v2-capability-mapping.md）：
  *
- * 证据锚点：`docs/osp-v2-host-capability-verification.md`
+ *   1. **`ctx` 是插件实例级的，不是会话级的**。
+ *      `ctx.location.directory` = 服务进程启动时的 cwd，**不能**用作 CCC 判据
+ *      （官方文档：「the plugin instance's location, not the location of every session」）。
+ *
+ *   2. **工具注册与 CCC 判定解耦**：
+ *      工具注册在**宿主级**（与会话无关），激活与否下沉到**会话级**（注入面判定）。
+ *      这与 specs §4.1「域外全局隐藏」的语义一致。
+ *
+ *   3. **注入面在会话级**：`ctx.session.hook("context", …)` 拿到 `SessionContext`
+ *      （含 `system` / `messages` / `tools`），且有 `sessionID` ⇒ 可据会话判定 CCC。
  */
 
 import { Plugin } from "@opencode/plugin"
 
-import { detectContainer, type ContainerInfo } from "./runtime/container.js"
 import { registerTools } from "./tools/index.js"
+import { evidence, diagnosticsEnabled } from "./runtime/diagnostics.js"
 
 /** 插件 id（宿主用于去重与日志；同一 id 不得重复注册） */
 const PLUGIN_ID = "serenity-acc"
@@ -25,18 +30,44 @@ export const SerenityPlugin = Plugin.define({
   id: PLUGIN_ID,
 
   async setup(ctx) {
-    // ── 阶段 1：环境探测 ────────────────────────────────────────
-    const container: ContainerInfo = await detectContainer(ctx)
+    const diag = diagnosticsEnabled()
 
-    // 不在 CCC 内 ⇒ 零影响退出（与 v1 的「非 CCC 目录零侵入」语义一致）
-    if (!container.isContainer) {
-      return
+    if (diag) {
+      evidence("loaded", {
+        at: new Date().toISOString(),
+        pluginId: PLUGIN_ID,
+        contextKeys: Object.keys(ctx ?? {}).sort(),
+        locationDirectory: ctx?.location?.directory ?? null,
+      })
     }
 
-    ctx.app?.version // 触碰一次，确认 ctx 形态（仅为类型校验）
+    // ── 阶段 1：工具面注册（宿主级，不依赖 CCC 判定）────────────
+    let disposers: Array<() => Promise<void> | void> = []
+    try {
+      disposers = await registerTools(ctx)
+      if (diag) {
+        // 自证：读回宿主实际注册的工具清单（机械证据，非自述）
+        const registered = await ctx.tool.list()
+        evidence("tools", {
+          at: new Date().toISOString(),
+          registeredCount: registered.length,
+          registeredNames: registered.map((t) => t.id ?? t.name),
+        })
+      }
+    } catch (e) {
+      if (diag) {
+        evidence("tools-error", {
+          at: new Date().toISOString(),
+          error: String(e),
+          stack: e instanceof Error ? e.stack : null,
+        })
+      }
+      throw e
+    }
 
-    // ── 阶段 2：工具面 ─────────────────────────────────────────
-    const disposers = await registerTools(ctx, container)
+    // ── 阶段 2：注入面（会话级，按会话判定 CCC）────────────────
+    // 见 docs/v2-capability-mapping.md §1：落点 = ctx.session.hook("context", …)
+    // Phase 2 接入。
 
     // ── 阶段 3：cleanup ────────────────────────────────────────
     return async () => {
