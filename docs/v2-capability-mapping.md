@@ -164,12 +164,71 @@ experimental.ws.handshake | experimental.ws.send | experimental.ws.receive | ret
 // 而 loaded.json 的 locationDirectory = ".../AI_LAB/opencode-serenity-plugin"（服务 cwd）
 ```
 
-**修正方向（待实现）**：
-- CCC 判据**不能**依赖 `ctx.location.directory`
-- 应在**会话级**判定：`session` 域的 hook 提供 `sessionID`，可据其取该会话的 `location`
-  （`ctx.session.get(...)` / `SessionDomain` 的会话对象含 `location`）
-- 或：工具注册**不依赖 CCC 判定**（先注册），而把"是否激活"下沉到**注入面**（按会话判定）
-  —— 这与 v1 的"域外全局隐藏"（§4.1）语义反而更契合
+---
 
-> 🔴 **教训（第四次同类）**：v2 的 `Context` 是**插件实例级**的，而 ACC 的多数语义是**会话级**的。
-> **插件实例 ≠ 会话** —— 后续所有"按 CCC 判定"的逻辑都要在**会话级**做。
+## 10. ✅ 会话级 CCC 判据 —— 已实证找到
+
+**正确来源**：`Session.Info.location.directory`（会话对象自带位置，与 `sessionID` 一一对应）
+
+**读取方式**（在 context hook 内）：
+```ts
+const session = await ctx.session.get({ sessionID })
+const cccDir = session.location.directory     // ← 会话级位置
+```
+
+**实测证据**（`/tmp/serenity-v2-load/context-hook.json`，真实会话）：
+```json
+{
+  "sessionID": "ses_ec9c0ca1effeuaXevS4y6wN0H9",
+  "agent": "home-serenity",
+  "sessionLocation": { "directory": "/home/yh/home/home-serenity" }   // ← CCC！判据成立
+}
+```
+对照：同一次会话的 `api session.create` 返回体亦含
+`"location":{"directory":"/home/yh/home/home-serenity"}`。
+
+**重要旁证**：在**非 CCC** 目录（`/home/yh`）建的会话，**context hook 不触发我们插件** ——
+因为**插件按 location 加载**。⇒ 语义自洽：**插件在哪个 location 加载，就服务哪个 location 的会话**。
+
+---
+
+## 11. ✅ 9 块注入的真实数据形态 —— 已实证
+
+**实测**（同一份证据文件）：
+```json
+"topLevelKeys": ["agent","messages","model","options","sessionID","system","tools"],
+"systemType": "array",
+"systemLength": 4,
+"systemPartsPreview": [
+  { "type": "text", "text": "You are an AI agent running in OpenCode, a coding agent harness..." },
+  { "type": "text", "text": "# Your Model\n- Name: ...\n- Provider ID: ..." },
+  { "type": "text", "text": "# Code Mode\n\nUse the `execute` tool..." },
+  { "type": "text", "text": "When you create a worktree..." }
+]
+```
+
+**判据**：
+- `system` 是 **`Array<{type:"text", text:string}>`**（`SystemPart`）⇒ **注入 = push 新 part**
+- 数组**非 readonly**（可直接 mutate）⇒ 与 §1 的推断一致
+- 注入 content 会与宿主自身的 4 个 part 并列 ⇒ **需自行去重/判存**（避免重复注入）
+
+**v2 与 v1 的注入差异**：
+
+| | v1 | v2 |
+|---|---|---|
+| 载体 | `string[]` | `Array<SystemPart>`（结构化） |
+| 注入 | push 字符串 | push `{type:"text", text}` |
+| 去重 | 字符串比对 | 可按 type/来源比对 |
+| 分流 | 无 | 有 `SessionRequestKind`（primary/compaction/title/generate） |
+
+> 🎯 **结论：9 块注入在 v2 上可实现，且落点已实证。**
+> 实现方式：在 `ctx.session.hook("context", …)` 内，先按 `sessionID` 取 `location.directory`
+> 判定 CCC，判定通过则向 `input.system` push 9 块对应 part。
+
+---
+
+## 12. 教训（第四次同类）—— 已完成勘误
+
+🔴 v2 的 `Context` 是**插件实例级**的，而 ACC 的多数语义是**会话级**的。
+**插件实例 ≠ 会话** —— 所有"按 CCC 判定"的逻辑都要在**会话级**做（`session.get(sessionID).location`）。
+

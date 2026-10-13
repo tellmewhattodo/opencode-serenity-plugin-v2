@@ -21,11 +21,9 @@
 import { Plugin } from "@opencode/plugin"
 
 import { registerTools } from "./tools/index.js"
-import { registerInjectionProbe } from "./runtime/injection-probe.js"
+import { registerInjection } from "./runtime/injection.js"
 import { evidence, diagnosticsEnabled } from "./runtime/diagnostics.js"
-
-/** 插件 id（宿主用于去重与日志；同一 id 不得重复注册） */
-const PLUGIN_ID = "serenity-acc"
+import { PLUGIN_ID } from "./version.js"
 
 export const SerenityPlugin = Plugin.define({
   id: PLUGIN_ID,
@@ -67,8 +65,8 @@ export const SerenityPlugin = Plugin.define({
     }
 
     // ── 阶段 2：注入面（会话级，按会话判定 CCC）────────────────
-    // 见 docs/v2-capability-mapping.md §1：落点 = ctx.session.hook("context", …)
-    const injectionDisposers = await registerInjectionProbe(ctx).catch((e) => {
+    // 落点 = ctx.session.hook("context", …)（见 docs/v2-capability-mapping.md §1/§11）
+    const injectionDisposers = await registerInjection(ctx).catch((e) => {
       if (diag) evidence("injection-error", { error: String(e) })
       return []
     })

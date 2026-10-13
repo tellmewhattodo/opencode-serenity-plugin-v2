@@ -37,6 +37,8 @@ export interface SessionHookRegistrar {
       name: "context",
       callback: (input: unknown) => Promise<void> | void,
     ): Promise<Registration>
+    /** 取会话对象（含 location.directory —— 会话级 CCC 判据的正确来源） */
+    get?(input: { sessionID: string }): Promise<unknown>
   }
 }
 
