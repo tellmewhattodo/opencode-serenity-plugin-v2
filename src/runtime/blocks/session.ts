@@ -12,8 +12,8 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs"
 import { join } from "node:path"
 
-/** ACC 约定的活跃会话说指针 */
-const CURRENT_POINTER = ".opencode/sessions/.current"
+/** ACC 约定的活跃会话说指针（实测：位于 AGENT_SESSIONS/.current） */
+const CURRENT_POINTER = "AGENT_SESSIONS/.current"
 
 /**
  * 解析活跃会话。

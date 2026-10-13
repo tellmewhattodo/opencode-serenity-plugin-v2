@@ -22,6 +22,7 @@ import { ACC_VERSION, PLUGIN_ID } from "../version.js"
 import { evidence, diagnosticsEnabled } from "./diagnostics.js"
 import { buildToolBlock } from "./blocks/tools.js"
 import { buildSessionBlock } from "./blocks/session.js"
+import { buildSkillBlock } from "./blocks/skill.js"
 import { detectContainer } from "./ccc.js"
 
 /** 块标记头（specs §5.0 表；用于幂等检测）—— 唯一真相源 */
@@ -114,7 +115,15 @@ Additional MSMs registered by this CCC are available — call msm() with no argu
   }
 
   // ── 块 7：SKILL 全文（条件；specs §5.7）───────────────────────
-  // 入口技能发现见 ccc.ts；Phase 2b 接入
+  // 无入口技能 / 读不到全文 ⇒ 不产出该块（空标题是噪声）
+  const skillBlock = buildSkillBlock(cccRoot)
+  if (skillBlock) {
+    // SKILL 块无标记头（原文直推）⇒ 幂等按其内容前缀判定
+    const skillProbe = skillBlock.slice(0, 80)
+    if (!existingTexts.some((t) => t.includes(skillProbe))) {
+      out.push(skillBlock)
+    }
+  }
 
   // ── 块 8：Tools（specs §5.8）──────────────────────────────────
   push(BLOCK_MARKERS[6], buildToolBlock())
