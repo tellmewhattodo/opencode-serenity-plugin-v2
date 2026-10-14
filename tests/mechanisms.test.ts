@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { join } from "node:path"
 
 import { hitsProtectedRegistry } from "../src/runtime/registry-guard.js"
+import { diagnosticsEnabled } from "../src/runtime/diagnostics.js"
 import {
   setPendingRebuild,
   consumePendingRebuild,
@@ -218,5 +219,32 @@ describe("trajectory-assistant — 配置读取", () => {
   it("非 CCC 路径 ⇒ 缺省值（不抛）", () => {
     const cfg = loadKeeperConfig("/tmp")
     expect(cfg.threshold).toBe(100)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────
+// diagnostics 默认关（发布纪律：不得对用户机器产生未被请求的副作用）
+// ─────────────────────────────────────────────────────────────
+describe("diagnostics — opt-in（默认关）", () => {
+  const saved = process.env.SERENITY_V2_DIAG
+
+  afterEach(() => {
+    if (saved === undefined) delete process.env.SERENITY_V2_DIAG
+    else process.env.SERENITY_V2_DIAG = saved
+  })
+
+  it("🔴 未设 SERENITY_V2_DIAG ⇒ 关闭（v0.1.0 曾默认开，向 /tmp 写文件）", () => {
+    delete process.env.SERENITY_V2_DIAG
+    expect(diagnosticsEnabled()).toBe(false)
+  })
+
+  it("SERENITY_V2_DIAG=1 ⇒ 开启（开发期取证用）", () => {
+    process.env.SERENITY_V2_DIAG = "1"
+    expect(diagnosticsEnabled()).toBe(true)
+  })
+
+  it("其它值（如 0）⇒ 仍关闭（只有字面量 \"1\" 才开）", () => {
+    process.env.SERENITY_V2_DIAG = "0"
+    expect(diagnosticsEnabled()).toBe(false)
   })
 })
