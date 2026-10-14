@@ -4,9 +4,42 @@ import { join } from "node:path"
 
 import { resolveInRoot, isInRoot } from "../src/runtime/path-guard.js"
 import { createContainerFsTool } from "../src/tools/container_fs.js"
+import { buildTools } from "../src/tools/index.js"
+import { TOOL_OUTPUT_SCHEMA } from "../src/tools/output-schema.js"
 
 const ROOT = "/home/yh/home/home-serenity"
 const TMP = join(ROOT, "_tmp/v2-test-fs")
+
+/**
+ * 🔴 复刻宿主对工具返回值的**二元判定**（反编译宿主二进制所得原文逻辑）：
+ *
+ * ```js
+ * if (tool.output === undefined) {
+ *   if ("output" in result) fail("Tool result declared output without an output schema")
+ *   return { output: undefined, content }
+ * }
+ * if (!("output" in result)) fail("Tool did not return its declared output")
+ * ```
+ *
+ * 这个函数存在的意义：**把这个契约变成可测的**。
+ * 2026-10-14 之前没有任何测试覆盖它 ⇒ 9 个工具**全部**每次调用都失败而无人察觉
+ * （错误不落 opencode.log，只进会话消息 metadata）。
+ */
+function hostValidateResult(
+  tool: { output?: unknown },
+  result: { output?: unknown; content?: unknown },
+): { ok: true } | { ok: false; error: string } {
+  if (tool.output === undefined) {
+    if (result.output !== undefined) {
+      return { ok: false, error: "Tool result declared output without an output schema" }
+    }
+    return { ok: true }
+  }
+  if (result.output === undefined) {
+    return { ok: false, error: "Tool did not return its declared output" }
+  }
+  return { ok: true }
+}
 
 /** 取工具执行结果（统一签名） */
 async function run(tool: ReturnType<typeof createContainerFsTool>, args: unknown) {
@@ -215,6 +248,111 @@ describe("container_fs — 写入子命令", () => {
     // 判据：必须把**全部 15 个子命令**列出来（便于模型自我纠正）
     for (const sub of ["root", "resolve", "exists", "list", "tree", "relative", "mkdir", "rm", "mv", "cp", "touch", "append", "reveal", "info", "find"]) {
       expect(r.content).toContain(sub)
+    }
+  })
+})
+
+// ─────────────────────────────────────────────────────────────
+// 🔴 宿主返回值契约（2026-10-14 owner 报「工具调用有报错」的根因护栏）
+//
+// 背景：宿主判定「未声明 output 却返回 output」⇒ 直接失败。我们的工具全部如此
+// ⇒ 9 个工具每次调用都失败，且错误不落日志（只进会话消息 metadata），
+// 藏了很久才由 owner 的实测暴露。这些测试把该契约钉死。
+// ─────────────────────────────────────────────────────────────
+describe("🔴 工具返回值契约（宿主对 output schema 的二元判定）", () => {
+  /**
+   * 🔴 用 `buildTools`（**注册路径**）而非各工厂裸产物 —— 二者不同：
+   *   `withOutputSchema` / `needsRoot` 都是**注册期**才包的。
+   *   最初写这组测试时我断言了工厂产物 ⇒ 测试失败 ⇒ 恰好暴露了
+   *   「测的不是宿主真收到的那批对象」这个方法论陷阱。
+   */
+  const makeAll = () => buildTools(async () => ROOT)
+
+  it("🔴 9 个契约工具全部声明了 output schema（否则一调用就失败）", () => {
+    const tools = makeAll()
+    expect(tools).toHaveLength(9)
+    for (const t of tools) {
+      expect(t.output, `工具 ${t.name} 缺 output 声明`).toBeDefined()
+    }
+  })
+
+  it("🔴 9 个工具名与 specs §4.1 契约名一致", () => {
+    const names = makeAll().map((t) => t.name).sort()
+    expect(names).toEqual(
+      [
+        "container_admin",
+        "container_fs",
+        "container_git",
+        "container_trajectory",
+        "dashboard",
+        "handyman",
+        "msm",
+        "praxis",
+        "resident",
+      ].sort(),
+    )
+  })
+
+  it("🔴 output schema 是对象型且不虚构字段（additionalProperties 放开）", () => {
+    expect(TOOL_OUTPUT_SCHEMA).toMatchObject({ type: "object", additionalProperties: true })
+  })
+
+  it("🔴 反例：未声明 output 却返回 output ⇒ 宿主要判失败（契约本身的自证）", () => {
+    const bad = hostValidateResult({}, { output: { x: 1 }, content: "c" })
+    expect(bad.ok).toBe(false)
+    if (!bad.ok) expect(bad.error).toBe("Tool result declared output without an output schema")
+  })
+
+  it("🔴 反例：声明了 output 却不返回 ⇒ 宿主要判失败", () => {
+    const bad = hostValidateResult({ output: TOOL_OUTPUT_SCHEMA }, { content: "c" })
+    expect(bad.ok).toBe(false)
+    if (!bad.ok) expect(bad.error).toBe("Tool did not return its declared output")
+  })
+
+  it("🔴 真机路径：container_fs 各子命令的返回值都能过宿主判定", async () => {
+    const registered = makeAll().find((t) => t.name === "container_fs")!
+    const t = createContainerFsTool(ROOT)
+    for (const args of [
+      { action: "root" },
+      { action: "list", path: "." },
+      { action: "exists", path: "localstore.json" },
+      { action: "info", path: "localstore.json" },
+      { action: "tree", path: "_tmp", depth: 1 },
+      { action: "find", path: "_tmp", pattern: "*" },
+      { action: "relative", path: "." },
+      { action: "resolve", path: "." },
+      { action: "reveal", path: "." },
+      { action: "nope" },
+      { action: "list" }, // 缺 path ⇒ 错误分支
+      { action: "exists", path: "../escape" }, // 逃逸 ⇒ 错误分支
+    ]) {
+      const r = await run(t, args)
+      const v = hostValidateResult(registered, r)
+      expect(v.ok, `${JSON.stringify(args)} 未过宿主契约：${v.ok ? "" : v.error}`).toBe(true)
+    }
+  })
+
+  it("🔴 每个工具在「不在 CCC 内」分支的返回值也过契约（needsRoot 包装路径）", async () => {
+    // resolveRoot 恒返回 null ⇒ 走 not_in_ccc 分支
+    const tools = buildTools(async () => null)
+    for (const t of tools) {
+      if (t.name === "dashboard") continue // dashboard 不包 needsRoot（不需要根）
+      const r = await t.execute({ action: "root" } as never, { sessionID: "ses_x" } as never)
+      const v = hostValidateResult(t, r as { output?: unknown; content?: unknown })
+      expect(v.ok, `${t.name} 的 not_in_ccc 分支未过契约：${v.ok ? "" : v.error}`).toBe(true)
+    }
+  })
+
+  it("🔴 所有子命令的返回都含结构化 output 且恒为对象（不是裸值）", async () => {
+    const t = createContainerFsTool(ROOT)
+    for (const args of [
+      { action: "root" },
+      { action: "list", path: "." },
+      { action: "nope" },
+    ]) {
+      const r = await run(t, args)
+      expect(r.output).toBeTypeOf("object")
+      expect(typeof r.content).toBe("string")
     }
   })
 })
