@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach } from "vitest"
+import { existsSync } from "node:fs"
 import { join } from "node:path"
 
-import { assembleBlocks, BLOCK_MARKERS } from "../src/runtime/injection.js"
+import { assembleBlocks, BLOCK_MARKERS, LOCALSTORE_MARKER } from "../src/runtime/injection.js"
 import { detectRoot } from "../src/runtime/ccc.js"
 import { buildToolBlock } from "../src/runtime/blocks/tools.js"
 import { buildSessionBlock, resolveActiveSession } from "../src/runtime/blocks/session.js"
@@ -150,6 +151,51 @@ describe("injection — assembleBlocks 装配序（specs §5.0）", () => {
     for (const n of ["1. Continuity", "2. Bounded Space", "3. Entropy is Intrinsic", "4. Reconstruction > Preservation", "5. Multi-Agent Cognition"]) {
       expect(cce).toContain(n)
     }
+  })
+})
+
+// ── 块 6：状态块 —— **独立两块**（specs §5.6）────────────────────────────
+describe("块 6 状态块（specs §5.6：Safe Mode / Localstore 两块，各自条件）", () => {
+  it("Safe Mode 块在 marker 存在时产出，含四条操作细节", () => {
+    const blocks = assembleBlocks({ cccRoot: CCC, cccName: "home-serenity", existingTexts: [] })
+    const sm = blocks.find((b) => b.startsWith(BLOCK_MARKERS[5]))
+    if (!sm) {
+      // marker 不在 ⇒ 整块省略（合法）；此时断言 marker 确实不存在
+      expect(existsSync(join(CCC, ".serenity-safe-on"))).toBe(false)
+      return
+    }
+    expect(sm).toContain("bash is disabled (hidden and blocked)")
+    expect(sm).toContain("blacklist rules apply to file paths")
+    expect(sm).toContain("governance files")
+  })
+
+  it("🔴 黑名单为空 ⇒ **不**出现 `Active blacklist rules:` 行（specs §5.6 块内唯一字段级差异）", () => {
+    const blocks = assembleBlocks({ cccRoot: CCC, cccName: "home-serenity", existingTexts: [] })
+    const sm = blocks.find((b) => b.startsWith(BLOCK_MARKERS[5]))
+    if (!sm) return
+    // 本 CCC 的 .opencode/serenity.json 中 safeMode.blacklist = [] ⇒ 该行必须缺席
+    expect(sm).not.toContain("Active blacklist rules:")
+  })
+
+  it("🔴 Localstore 块按 gitTrack 产出（本 CCC = allow）", () => {
+    const blocks = assembleBlocks({ cccRoot: CCC, cccName: "home-serenity", existingTexts: [] })
+    const ls = blocks.find((b) => b.startsWith(LOCALSTORE_MARKER))
+    expect(ls).toBeDefined()
+    expect(ls).toContain("localstore.json is committed to git (gitTrack=allow")
+    expect(ls).toContain("ONLY in this file")
+  })
+
+  it("🔴 两块标记头不同（共用一个会让幂等互相吞掉）", () => {
+    expect(LOCALSTORE_MARKER).not.toBe(BLOCK_MARKERS[5])
+  })
+
+  it("Localstore 已注入 ⇒ 幂等跳过（按自身标记头）", () => {
+    const blocks = assembleBlocks({
+      cccRoot: CCC,
+      cccName: "home-serenity",
+      existingTexts: [LOCALSTORE_MARKER],
+    })
+    expect(blocks.some((b) => b.startsWith(LOCALSTORE_MARKER))).toBe(false)
   })
 })
 

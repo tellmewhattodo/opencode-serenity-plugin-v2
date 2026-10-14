@@ -38,6 +38,15 @@ export const BLOCK_MARKERS = [
   "=== Serenity Session ===",
 ] as const
 
+/**
+ * 块 6 的**第二块**标记头（specs §5.6：状态块是**两块** — Safe Mode / Localstore，
+ * 各自独立条件，占**同一装配位**）。
+ *
+ * 单列而不并入 `BLOCK_MARKERS` 的理由：`BLOCK_MARKERS` 是**骨架 8 块**的索引表，
+ * Tools/Session 的位置已被测试与实现按固定下标引用；把 Localstore 插进去会**位移**它们。
+ */
+export const LOCALSTORE_MARKER = "=== Serenity Localstore ==="
+
 /** 从系统提示里读出已有文本（用于幂等检测） */
 function systemTexts(system: unknown): string[] {
   if (!Array.isArray(system)) return []
@@ -102,10 +111,23 @@ Additional MSMs registered by this CCC are available — call msm() with no argu
   // ── 块 5：EAP 或 Persona（specs §5.5 / §5.5a，互斥）───────────
   push(BLOCK_MARKERS[4], EAP_BLOCK)
 
-  // ── 块 6：状态块（条件；specs §5.6）───────────────────────────
+  // ── 块 6：状态块（条件；specs §5.6 —— **独立两块**，各自条件）────
+  // 6a. Safe Mode（marker 不在 ⇒ 整块省略）
   const safeMode = existsSync(join(cccRoot, ".serenity-safe-on"))
   if (safeMode) {
-    push(BLOCK_MARKERS[5], SAFE_MODE_BLOCK)
+    // 🔴 有黑名单时追加一行（规则为空 ⇒ 该行不出现）——块内**唯一**的字段级差异
+    const rules = readBlacklistRules(cccRoot)
+    const text = rules.length
+      ? `${SAFE_MODE_BLOCK}\nActive blacklist rules: ${rules.join(", ")}`
+      : SAFE_MODE_BLOCK
+    push(BLOCK_MARKERS[5], text)
+  }
+
+  // 6b. Localstore（按 CCC 的 localstore.gitTrack 条件；两块独立条件）
+  const gitTrack = readGitTrack(cccRoot)
+  if (gitTrack) {
+    const text = gitTrack === "allow" ? LOCALSTORE_ALLOW_BLOCK : LOCALSTORE_DENY_BLOCK
+    push(LOCALSTORE_MARKER, text)
   }
 
   // ── 块 7：SKILL 全文（条件；specs §5.7）───────────────────────
@@ -345,6 +367,61 @@ Operational details:
 
 Behavior constraints: do not attempt to bypass restrictions; do not write to
 blacklisted paths or governance files.`
+
+/** 块 6b：Localstore —— gitTrack=allow 分支（specs §5.6 逐字） */
+const LOCALSTORE_ALLOW_BLOCK = `${LOCALSTORE_MARKER}
+localstore.json is committed to git (gitTrack=allow — personal private repository).
+Sensitive data may live in this file, but ONLY in this file: keep credentials and
+secret values confined to localstore.json — never leak them into other files,
+conversation, or logs.`
+
+/** 块 6b：Localstore —— gitTrack=deny 分支（specs §5.6） */
+const LOCALSTORE_DENY_BLOCK = `${LOCALSTORE_MARKER}
+localstore.json is a LOCAL private file (gitTrack=deny) — it is force-ignored by .gitignore.
+Sensitive data may live in this file, but ONLY in this file: keep credentials and
+secret values confined to localstore.json — never leak them into other files,
+conversation, or logs. Never attempt to commit it.`
+
+/**
+ * 读 CCC 的 safe-mode 黑名单规则（specs §5.6：有规则才追加 `Active blacklist rules:` 行）。
+ *
+ * 来源 = `.opencode/serenity.json` 的 `safeMode.blacklist`。
+ * 读不到 / 为空 ⇒ 返回 []（该行不出现 —— 这是块内**唯一**的字段级差异）。
+ */
+function readBlacklistRules(cccRoot: string): string[] {
+  try {
+    const p = join(cccRoot, ".opencode", "serenity.json")
+    if (!existsSync(p)) return []
+    const cfg = JSON.parse(readFileSync(p, "utf8")) as {
+      safeMode?: { blacklist?: unknown }
+    }
+    const list = cfg?.safeMode?.blacklist
+    if (!Array.isArray(list)) return []
+    return list.filter((r): r is string => typeof r === "string" && r.trim().length > 0)
+  } catch {
+    return []
+  }
+}
+
+/**
+ * 读 CCC 的 localstore git 策略（specs §5.6 块 6b 的触发条件）。
+ *
+ * 来源 = `.opencode/serenity.json` 的 `localstore.gitTrack`。
+ * 返回 null ⇒ 未配置 ⇒ **整块省略**（specs：无对应状态即整块省略）。
+ */
+function readGitTrack(cccRoot: string): "allow" | "deny" | null {
+  try {
+    const p = join(cccRoot, ".opencode", "serenity.json")
+    if (!existsSync(p)) return null
+    const cfg = JSON.parse(readFileSync(p, "utf8")) as {
+      localstore?: { gitTrack?: unknown }
+    }
+    const v = cfg?.localstore?.gitTrack
+    return v === "allow" || v === "deny" ? v : null
+  } catch {
+    return null
+  }
+}
 
 function principlesBlock(cccRoot: string): string {
   return `=== Serenity Principles ===
