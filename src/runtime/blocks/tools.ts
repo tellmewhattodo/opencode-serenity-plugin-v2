@@ -20,6 +20,8 @@ const IMPLEMENTED_TOOL_LINES: string[] = [
   "  dashboard    — always-on container instruments: health (CCC three-principle check + registry integrity) / time (now) / wait (N seconds)",
   "  msm          — execute a registered CCC MSM: msm(name, args); partial name returns candidates; inspect=true shows usage",
   "  praxis       — actionable theory injection: praxis (index) / praxis eap / praxis neat / praxis cce / praxis ontology",
+  "  handyman     — delegate work to a worker agent on a CCC-whitelisted model; mode=\"foreground\" (default) = one-shot delegation (jobs=[...] fans out in parallel, cap 10); mode=\"background\" = loop-validated worker (completion code + round cap + progress file)",
+  "  resident     — resident agent (host superset): start (blocks, like loop) / stop / status / list. Process cleanup on interrupt is mandatory",
 ]
 
 /** msm 调用协议（4 行，specs §5.8 要求） */

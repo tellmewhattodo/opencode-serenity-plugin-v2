@@ -24,6 +24,8 @@ import { createContainerTrajectoryTool } from "./container_trajectory.js"
 import { createContainerAdminTool } from "./container_admin.js"
 import { createMsmTool } from "./msm.js"
 import { createPraxisTool } from "./praxis.js"
+import { createHandymanTool } from "./handyman.js"
+import { createResidentTool } from "./resident.js"
 
 /**
  * 注册全部工具。
@@ -61,7 +63,7 @@ export async function registerTools(
   }
 
   const tools: SerenityTool[] = [
-    // ── 常驻最小公共集（specs §4.1）──────────────────
+    // ── 常驻最小公共集（specs §4.1，9 契约工具）──────────────
     createDashboardTool(),
     needsRoot(createContainerFsTool),
     needsRoot(createContainerGitTool),
@@ -69,7 +71,11 @@ export async function registerTools(
     needsRoot(createContainerAdminTool),
     needsRoot(createMsmTool),
     needsRoot(createPraxisTool),
-    // 后续（objective 剩余）：handyman / resident / logbook
+    needsRoot(createHandymanTool),
+    needsRoot(createResidentTool),
+    // 说明：specs §4.1 另列 ontology / serenity-skill-creator / localstore /
+    //   container_trajectory（已实现）；objective 的 9 名清单已全覆盖，
+    //   余下三项（ontology / serenity-skill-creator / localstore）按 specs 全表后续补
   ]
 
   const registrations = await Promise.all(
