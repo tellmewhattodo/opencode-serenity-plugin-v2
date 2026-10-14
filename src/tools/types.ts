@@ -45,8 +45,26 @@ export interface SessionHookRegistrar {
       name: "context",
       callback: (input: unknown) => Promise<void> | void,
     ): Promise<Registration>
+    hook(
+      name: "compaction",
+      callback: (input: unknown) => Promise<void> | void,
+    ): Promise<Registration>
     /** 取会话对象（含 location.directory —— 会话级 CCC 判据的正确来源） */
     get?(input: { sessionID: string }): Promise<unknown>
+  }
+}
+
+/** tool.hook 的注册面（机制面用） */
+export interface ToolHookRegistrar {
+  tool: {
+    hook(
+      name: "execute.before",
+      callback: (event: unknown) => Promise<void> | void,
+    ): Promise<Registration>
+    hook(
+      name: "execute.after",
+      callback: (event: unknown) => Promise<void> | void,
+    ): Promise<Registration>
   }
 }
 

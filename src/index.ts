@@ -22,6 +22,9 @@ import { Plugin } from "@opencode/plugin"
 
 import { registerTools } from "./tools/index.js"
 import { registerInjection } from "./runtime/injection.js"
+import { registerRegistryGuard } from "./runtime/registry-guard.js"
+import { registerRebuild } from "./runtime/rebuild.js"
+import { registerTrajectoryAssistant } from "./runtime/trajectory-assistant.js"
 import { detectContainer } from "./runtime/ccc.js"
 import { evidence, diagnosticsEnabled } from "./runtime/diagnostics.js"
 import { PLUGIN_ID } from "./version.js"
@@ -76,10 +79,42 @@ export const SerenityPlugin = Plugin.define({
       return []
     })
 
-    // ── 阶段 3：cleanup ────────────────────────────────────────
+    // ── 阶段 3：机制面（三项）──────────────────────────────────
+    const mechDisposers: Array<() => Promise<void>> = []
+
+    // ① registry 写保护（tool.hook("execute.before")）
+    await registerRegistryGuard(ctx)
+      .then((d) => mechDisposers.push(...d))
+      .catch((e) => {
+        if (diag) evidence("registry-guard-error", { error: String(e) })
+      })
+
+    // ② rebuild（session.hook("compaction")；result 可直设 ⇒ 跳过模型请求）
+    await registerRebuild(ctx)
+      .then((d) => mechDisposers.push(...d))
+      .catch((e) => {
+        if (diag) evidence("rebuild-error", { error: String(e) })
+      })
+
+    // ③ trajectory-assistant（计分 execute.after + 提醒 context）
+    await registerTrajectoryAssistant(ctx)
+      .then((d) => mechDisposers.push(...d))
+      .catch((e) => {
+        if (diag) evidence("assistant-error", { error: String(e) })
+      })
+
+    if (diag) {
+      evidence("mechanisms", {
+        at: new Date().toISOString(),
+        registered: mechDisposers.length,
+        expected: 4, // registry-guard 1 + rebuild 1 + assistant 2
+      })
+    }
+
+    // ── 阶段 4：cleanup ────────────────────────────────────────
     return async () => {
       // 逆序释放；单个失败不阻断其余（清理必须尽力而为）
-      for (const dispose of [...injectionDisposers, ...disposers].reverse()) {
+      for (const dispose of [...mechDisposers, ...injectionDisposers, ...disposers].reverse()) {
         try {
           await dispose()
         } catch {

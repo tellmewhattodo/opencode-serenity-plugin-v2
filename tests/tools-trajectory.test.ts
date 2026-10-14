@@ -76,9 +76,10 @@ describe("container_trajectory — rebuild（登记意图）", () => {
   it("rebuild 带 summary ⇒ 登记意图并指向 v2 落点", async () => {
     const t = createContainerTrajectoryTool(ROOT)
     const r = await run(t, { action: "rebuild", summary: "下一阶段" })
-    expect(r.content).toContain("rebuild 请求已登记")
-    // 🔴 必须说明 v2 的真实落点（不假装已实现）
+    expect(r.content).toContain("rebuild 意图已登记")
+    // 🔴 必须说明 v2 的真实落点（机制面已接入）
     expect(r.content).toContain("compaction")
+    expect(r.content).toContain("跳过模型请求")
   })
 })
 

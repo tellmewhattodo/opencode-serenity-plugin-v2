@@ -22,6 +22,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSy
 import { join } from "node:path"
 
 import type { SerenityTool } from "./types.js"
+import { setPendingRebuild } from "../runtime/rebuild.js"
 
 const NAME = "container_trajectory"
 
@@ -279,20 +280,33 @@ export function createContainerTrajectoryTool(cccRoot: string): SerenityTool {
             return { output: { error: "missing_summary" }, content: "✗ rebuild 需要 summary（≤20 字）" }
           }
           const t = a.name ? findTrajectory(entries, a.name) : null
+          const targetId = t?.id ?? readCurrent(cccRoot)
+
+          // 🔴 登记 pending 意图 ⇒ 由 compaction hook 消费（机制面已接入）
+          const intentPath = setPendingRebuild(cccRoot, {
+            sessionID: undefined, // 未指定 ⇒ 对任意同 CCC 会话生效
+            summary: a.summary,
+            note: a.note,
+            requestedAt: new Date().toISOString(),
+          })
+
           return {
             output: {
-              rebuild: "requested",
-              target: t?.id ?? readCurrent(cccRoot),
+              rebuild: "pending",
+              target: targetId,
               summary: a.summary,
               note: a.note ?? null,
+              intentPath: intentPath.replace(cccRoot + "/", ""),
             },
             content: [
-              `rebuild 请求已登记：${t?.id ?? readCurrent(cccRoot) ?? "(当前轨迹)"}`,
-              `summary: ${a.summary}`,
-              a.note ? `note: ${a.note}` : "",
+              `✓ rebuild 意图已登记：${targetId ?? "(当前轨迹)"}`,
+              `  summary: ${a.summary}`,
+              a.note ? `  note: ${a.note}` : "",
+              `  落点: ${intentPath.replace(cccRoot + "/", "")}`,
               "",
-              "⚠ v2 的 rebuild 落点 = ctx.session.hook(\"compaction\")（机制面，Phase 3 接入）。",
-              "  当前仅登记意图，实际重建由宿主压缩链触发。",
+              "触发方式（v2 落点）：宿主**压缩该会话**时，",
+              "  `session.hook(\"compaction\")` 会消费此意图 ⇒ 追加重建锚点 + 设 result（跳过模型请求）。",
+              "  ⇒ 即：**原地重建 + 载体重锚定到 SESSION.md**（持久身体不动）。",
             ]
               .filter(Boolean)
               .join("\n"),
