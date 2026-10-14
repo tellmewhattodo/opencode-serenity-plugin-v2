@@ -4,6 +4,7 @@ import { join } from "node:path"
 
 import { hitsProtectedRegistry } from "../src/runtime/registry-guard.js"
 import { diagnosticsEnabled } from "../src/runtime/diagnostics.js"
+import { ACC_VERSION } from "../src/version.js"
 import {
   setPendingRebuild,
   consumePendingRebuild,
@@ -246,5 +247,25 @@ describe("diagnostics — opt-in（默认关）", () => {
   it("其它值（如 0）⇒ 仍关闭（只有字面量 \"1\" 才开）", () => {
     process.env.SERENITY_V2_DIAG = "0"
     expect(diagnosticsEnabled()).toBe(false)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────
+// 版本一致性（发布纪律：两处版本号不得漂移）
+// ─────────────────────────────────────────────────────────────
+describe("version — package.json ↔ src/version.ts 一致", () => {
+  it("🔴 ACC_VERSION 必须等于 package.json 的 version", () => {
+    // 为何要拦：ACC_VERSION 是**注入提示词**里 ACC 身份块的展示值（"ACC: serenity-acc vX"），
+    // 而 package.json 的 version 是**发布物**版本。两者漂移 ⇒ 装的是新版、
+    // 模型看到的却是旧版号 —— 且**不会有任何报错**（属静默错误）。
+    const pkg = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf8")) as {
+      version: string
+    }
+    expect(ACC_VERSION).toBe(pkg.version)
+  })
+
+  it("🔴 CHANGELOG 顶部必须有当前版本的章节（发布物应自带说明）", () => {
+    const log = readFileSync(join(process.cwd(), "CHANGELOG.md"), "utf8")
+    expect(log).toContain(`## v${ACC_VERSION}`)
   })
 })

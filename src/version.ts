@@ -3,7 +3,7 @@
 export const PLUGIN_ID = "serenity-acc"
 
 /** 适配层版本（与 package.json 的 version 手工同步；发布时校验） */
-export const ACC_VERSION = "0.1.0"
+export const ACC_VERSION = "0.1.1"
 
 /** ACC 标准版本（specs 的版本，用于 ACC 身份块展示） */
 export const SPECS_VERSION = "2.0.0"
