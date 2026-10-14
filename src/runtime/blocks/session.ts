@@ -1,77 +1,68 @@
 /**
  * 块 9：Session（specs §5.9）
  *
- * 条件注入：有活跃会话时产出；无则整块省略。
+ * 条件注入：有活跃轨迹时产出；无则整块省略（specs §5.9「无活跃会话时整块省略」）。
  *
- * 活跃会话判据（本实现）：读 `<CCC>/.opencode/sessions/.current`（ACC 约定）
- *   —— 该文件存在且非空 ⇒ 视为活跃会话。
+ * 🔴 活跃轨迹解析（2026-10-14 重写，实测教训见 active-trajectory.ts 头注释）：
+ *   **不再**读全局落盘指针 `AGENT_SESSIONS/.current` —— 它既是全局单值（并发串台），
+ *   又会进程重启后残留陈旧值（实测 `.current`=S055 而该目录不存在 ⇒ 静默整块省略）。
+ *   改为**按会话隔离的内存状态**（对齐 v1 `active-state.ts` / dsp `activeStore`），
+ *   由 `container_trajectory use` 写入。
  *
  * 🔴 必附 TRAJECTORY-ASSISTANT 预声明（specs §5.9：「机制先于提醒」）。
  */
 
-import { existsSync, readFileSync, readdirSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 
-/** ACC 约定的活跃会话说指针（实测：位于 AGENT_SESSIONS/.current） */
-const CURRENT_POINTER = "AGENT_SESSIONS/.current"
+import { getActiveTrajectory, getLastActiveTrajectory } from "../active-trajectory.js"
 
-/**
- * 解析活跃会话。
- *
- * 返回 null ⇒ 无活跃会话（整块省略）。
- */
-export function resolveActiveSession(cccRoot: string): {
-  id: string
-  dirName: string
-  sessionPath: string
-  shortName: string
-} | null {
-  const pointerPath = join(cccRoot, CURRENT_POINTER)
-  if (!existsSync(pointerPath)) return null
-
-  let sessionId = ""
-  try {
-    sessionId = readFileSync(pointerPath, "utf8").trim()
-  } catch {
-    return null
-  }
-  if (!sessionId) return null
-
-  // 在 AGENT_SESSIONS/ 下找以该 id 结尾的目录
-  const sessionsDir = join(cccRoot, "AGENT_SESSIONS")
-  if (!existsSync(sessionsDir)) return null
-
-  let dirName: string | null = null
-  try {
-    for (const entry of readdirSync(sessionsDir, { withFileTypes: true })) {
-      if (!entry.isDirectory()) continue
-      if (entry.name.endsWith(`--${sessionId}`) || entry.name.includes(`--${sessionId}--`)) {
-        dirName = entry.name
-        break
-      }
-    }
-  } catch {
-    return null
-  }
-  if (!dirName) return null
-
-  const sessionPath = join(sessionsDir, dirName, "SESSION.md")
-  if (!existsSync(sessionPath)) return null
-
-  // 短名 = 目录名去掉日期前缀与 ID 段
-  const shortName = dirName.replace(/^\d{4}-\d{2}-\d{2}--/, "").replace(/^S\d+--/, "")
-
-  return { id: sessionId, dirName, sessionPath, shortName }
+/** 活跃轨迹信息（与宿主会话解耦的纯数据） */
+export interface ActiveTrajectory {
+  /** S### 编号 */
+  readonly id: string
+  /** 目录名（如 `2026-09-06--S156--opencode-serenity 长期维护`） */
+  readonly dirName: string
+  /** SESSION.md 绝对路径 */
+  readonly mdPath: string
 }
 
-/** 构建 Session 块（无活跃会话 ⇒ null） */
-export function buildSessionBlock(cccRoot: string): string | null {
-  const s = resolveActiveSession(cccRoot)
+/**
+ * 由目录名解析轨迹信息（用于 `container_trajectory use`）。
+ *
+ * 返回 null ⇒ 目录不存在或缺 SESSION.md（调用方据此拒绝激活，**不制造半截状态**）。
+ */
+export function resolveTrajectoryDir(cccRoot: string, dirName: string): ActiveTrajectory | null {
+  const mdPath = join(cccRoot, "AGENT_SESSIONS", dirName, "SESSION.md")
+  if (!existsSync(mdPath)) return null
+  const m = /--(S\d+)--/.exec(dirName)
+  const id = m?.[1] ?? dirName
+  return { id, dirName, mdPath }
+}
+
+/**
+ * 取本会话的活跃轨迹。
+ *
+ * @param sessionID 宿主会话 id（scope）。取不到精确匹配时**不回退**到全局最近值——
+ *   回退会把别的会话的轨迹注进来（串台）；精确匹配失败 ⇒ 视为无活跃轨迹。
+ *   例外：sessionID 为空时（子代理继承等无 scope 场景）用最近活跃值。
+ */
+export function resolveActiveSession(sessionID: string): ActiveTrajectory | null {
+  if (!sessionID) return getLastActiveTrajectory()
+  return getActiveTrajectory(sessionID)
+}
+
+/** 构建 Session 块（无活跃轨迹 ⇒ null） */
+export function buildSessionBlock(sessionID: string): string | null {
+  const s = resolveActiveSession(sessionID)
   if (!s) return null
+
+  // 短名 = 目录名去掉日期前缀与 S### 段
+  const shortName = s.dirName.replace(/^\d{4}-\d{2}-\d{2}--/, "").replace(/^S\d+--/, "")
 
   return `=== Serenity Session ===
 Active session: ${s.id} — ${s.dirName} (this session is the rebuildable carrier of the trajectory)
-SESSION.md path: ${s.sessionPath} (the trajectory's persistent body — stays in place through rebuilds)
+SESSION.md path: ${s.mdPath} (the trajectory's persistent body — stays in place through rebuilds)
 
 Rules (SESSION.md is the trajectory log — keep its format & granularity fixed):
   • Write only when a MILESTONE landed or a DECISION was made — not every round
@@ -92,7 +83,7 @@ the 当前状态 and 待 owner 裁决 sections only.
 
 CRITICAL: When calling todowrite, the first item in the todos array MUST
 always be:
-  { content: "SESSION: ${s.id} — ${s.shortName}",
+  { content: "SESSION: ${s.id} — ${shortName}",
     status: "completed" }
 This preserves the session context across todo updates.
 Do NOT remove or reorder this item — keep it at position 0.
@@ -105,4 +96,14 @@ reminder you MUST reply with the exact ACK code:
   [TRAJECTORY-ASSISTANT-skipped-{code}]  — if nothing to record this round
 Do not ignore the reminder; do not stop ongoing work. Codes are single-use;
 never reuse a prior code.`
+}
+
+/** 读 SESSION.md 正文（供 rebuild 锚点等使用） */
+export function readSessionMd(mdPath: string): string | null {
+  if (!existsSync(mdPath)) return null
+  try {
+    return readFileSync(mdPath, "utf8")
+  } catch {
+    return null
+  }
 }

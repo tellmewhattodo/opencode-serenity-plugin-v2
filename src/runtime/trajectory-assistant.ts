@@ -177,10 +177,10 @@ function computeReminders(
 
   // ── LOGBOOK COMPACTION（SESSION.md 体积）─────────────────
   if (cfg.sessionMdMaxKB > 0) {
-    const active = resolveActiveSession(cccRoot)
-    if (active && existsSync(active.sessionPath)) {
+    const active = resolveActiveSession(sessionID)
+    if (active && existsSync(active.mdPath)) {
       try {
-        const kb = Math.round(statSync(active.sessionPath).size / 1024)
+        const kb = Math.round(statSync(active.mdPath).size / 1024)
         if (kb > cfg.sessionMdMaxKB) {
           s.logbookRounds += 1
           out.push(buildLogbookCompaction(kb, cfg.sessionMdMaxKB, s.logbookRounds))
@@ -195,7 +195,7 @@ function computeReminders(
 
   // ── SCRATCH PRUNE（REBUILD-TODO.md 体积）铜 —— 独立条件 ──
   if (cfg.sessionMdMaxKB > 0) {
-    const active = resolveActiveSession(cccRoot)
+    const active = resolveActiveSession(sessionID)
     if (active) {
       const todoPath = join(cccRoot, "AGENT_SESSIONS", active.dirName, "REBUILD-TODO.md")
       if (existsSync(todoPath)) {

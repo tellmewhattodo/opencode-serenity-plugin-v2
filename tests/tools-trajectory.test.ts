@@ -5,10 +5,16 @@ import { join } from "node:path"
 import { createContainerTrajectoryTool } from "../src/tools/container_trajectory.js"
 import { createPraxisTool } from "../src/tools/praxis.js"
 import { createContainerAdminTool } from "../src/tools/container_admin.js"
+import { __resetActiveTrajectories } from "../src/runtime/active-trajectory.js"
+import { buildSessionBlock } from "../src/runtime/blocks/session.js"
+import { assembleBlocks } from "../src/runtime/injection.js"
 
 const ROOT = "/home/yh/home/home-serenity"
 const WAKE = join(ROOT, "AGENT_SESSIONS/wake-registry.json")
 const INBOX = join(ROOT, "AGENT_SESSIONS/_inbox")
+
+/** 测试用宿主会话 id（活跃轨迹按它隔离） */
+const SCOPE = "ses_test_scope_0001"
 
 /** 备份/恢复可能被测试触碰的文件 */
 let wakeBackup: string | null = null
@@ -20,13 +26,21 @@ function restoreWake() {
   else writeFileSync(WAKE, wakeBackup)
 }
 
-async function run(tool: { execute: (a: never, c: never) => Promise<unknown> }, args: unknown) {
-  return (await tool.execute(args as never, {} as never)) as { output: unknown; content: string }
+async function run(
+  tool: { execute: (a: never, c: never) => Promise<unknown> },
+  args: unknown,
+  scope: string = SCOPE,
+) {
+  return (await tool.execute(args as never, { sessionID: scope } as never)) as {
+    output: unknown
+    content: string
+  }
 }
 
 afterEach(() => {
   rmSync(INBOX, { recursive: true, force: true })
   restoreWake()
+  __resetActiveTrajectories()
 })
 
 describe("container_trajectory — list / show", () => {
@@ -52,17 +66,82 @@ describe("container_trajectory — list / show", () => {
 })
 
 describe("container_trajectory — use（内联完整性检查）", () => {
-  it("use 已存在的轨迹 ⇒ 激活并写 .current；测后恢复", async () => {
+  it("use 已存在的轨迹 ⇒ 激活（写**按会话隔离的内存状态**，不落盘）", async () => {
+    const t = createContainerTrajectoryTool(ROOT)
+    const r = await run(t, { action: "use", name: "S156", force: true })
+    expect(r.content).toContain("已激活")
+
+    // 🔴 反向断言：**不再**写全局落盘 `.current`（并发串台 + 陈旧残留的根因）
     const cur = join(ROOT, "AGENT_SESSIONS/.current")
-    const backup = existsSync(cur) ? readFileSync(cur, "utf8") : null
-    try {
-      const t = createContainerTrajectoryTool(ROOT)
-      const r = await run(t, { action: "use", name: "S156", force: true })
-      expect(r.content).toContain("已激活")
-      expect(readFileSync(cur, "utf8").trim()).toBe("S156")
-    } finally {
-      if (backup !== null) writeFileSync(cur, backup)
-    }
+    const onDisk = existsSync(cur) ? readFileSync(cur, "utf8").trim() : null
+    expect(onDisk).not.toBe("S156")
+
+    // 正断言：list 能在**同一 scope** 下看到活跃标记
+    const rl = await run(t, { action: "list" })
+    expect((rl.output as { current: string | null }).current).toBe("S156")
+  })
+
+  it("🔴 并发隔离：A 会话 use 后，B 会话读不到（防串台）", async () => {
+    const t = createContainerTrajectoryTool(ROOT)
+    await run(t, { action: "use", name: "S156", force: true }, "ses_scope_A")
+    await run(t, { action: "use", name: "S151", force: true }, "ses_scope_B")
+
+    const a = await run(t, { action: "list" }, "ses_scope_A")
+    const b = await run(t, { action: "list" }, "ses_scope_B")
+    expect((a.output as { current: string | null }).current).toBe("S156")
+    expect((b.output as { current: string | null }).current).toBe("S151")
+
+    // 第三个会话：无活跃轨迹（不受前两者影响）
+    const c = await run(t, { action: "list" }, "ses_scope_C")
+    expect((c.output as { current: string | null }).current).toBeNull()
+  })
+
+  it("🔴 绑定守卫按 scope 判：同一 scope 换目标需 force，不同 scope 不需", async () => {
+    const t = createContainerTrajectoryTool(ROOT)
+    await run(t, { action: "use", name: "S156", force: true }, "ses_scope_X")
+
+    const blocked = await run(t, { action: "use", name: "S151" }, "ses_scope_X")
+    expect(blocked.content).toContain("需 force")
+
+    // 换个 scope ⇒ 无历史绑定 ⇒ 不需要 force
+    const ok = await run(t, { action: "use", name: "S151" }, "ses_scope_Y")
+    expect(ok.content).toContain("已激活")
+  })
+
+  it("use 指向缺 SESSION.md 的轨迹 ⇒ 拒绝激活（不制造半截状态）", async () => {
+    const t = createContainerTrajectoryTool(ROOT)
+    const r = await run(t, { action: "use", name: "S99999", force: true })
+    expect(r.content).toContain("未找到轨迹")
+  })
+
+  // ── 🔴 跨模块集成：use → 块 9 注入（owner 报「注入有问题」的块 9 侧护栏）────
+  it("🔴 use 之后，buildSessionBlock 立即产出块 9（同一模块实例，无落盘中转）", async () => {
+    const t = createContainerTrajectoryTool(ROOT)
+    const r = await run(t, { action: "use", name: "S156", force: true }, "ses_integration")
+    expect(r.content).toContain("已激活")
+
+    const block = buildSessionBlock("ses_integration")
+    expect(block).not.toBeNull()
+    expect(block).toContain("=== Serenity Session ===")
+    expect(block).toContain("Active session: S156")
+    expect(block).toContain("SESSION.md path:")
+    expect(block).toContain("TRAJECTORY-ASSISTANT:")
+  })
+
+  it("🔴 use → assembleBlocks 里也出现块 9（端到端装配）", async () => {
+    const t = createContainerTrajectoryTool(ROOT)
+    await run(t, { action: "use", name: "S156", force: true }, "ses_assemble")
+
+    const blocks = assembleBlocks({
+      cccRoot: ROOT,
+      cccName: "home-serenity",
+      existingTexts: [],
+      sessionID: "ses_assemble",
+    })
+    const heads = blocks.map((b) => b.split("\n")[0])
+    expect(heads).toContain("=== Serenity Session ===")
+    // 且必须**在末尾**（specs §5.0：Session 是第 9 块，殿后）
+    expect(heads.indexOf("=== Serenity Session ===")).toBe(heads.length - 1)
   })
 })
 

@@ -15,7 +15,10 @@
  *   health·qa·summary（并入 use·list）/ wake-list·wake-rm
  *
  * 落点说明：轨迹落 `AGENT_SESSIONS/`（SESSION.md 为持久身体）；
- * 活跃指针 = `AGENT_SESSIONS/.current`（实测）；唤醒注册表 = `AGENT_SESSIONS/wake-registry.json`。
+ * 🔴 活跃轨迹 = **按会话隔离的内存状态**（`runtime/active-trajectory.ts`），
+ *   **不再**是全局落盘 `AGENT_SESSIONS/.current`（并发串台 + 进程重启残留陈旧值 ——
+ *   实测该文件残留 `S055` 而目录不存在，导致块 9 静默整块省略）；
+ *   唤醒注册表 = `AGENT_SESSIONS/wake-registry.json`。
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync, rmSync } from "node:fs"
@@ -23,6 +26,12 @@ import { join } from "node:path"
 
 import type { SerenityTool } from "./types.js"
 import { setPendingRebuild } from "../runtime/rebuild.js"
+import { resolveTrajectoryDir } from "../runtime/blocks/session.js"
+import {
+  setActiveTrajectory,
+  getActiveTrajectory,
+  clearActiveTrajectory,
+} from "../runtime/active-trajectory.js"
 
 const NAME = "container_trajectory"
 
@@ -120,16 +129,13 @@ function findTrajectory(entries: TrajectoryEntry[], q: string): TrajectoryEntry 
   )
 }
 
-/** 读活跃指针 */
-function readCurrent(cccRoot: string): string | null {
-  const p = join(cccRoot, SESSIONS_DIRNAME, ".current")
-  if (!existsSync(p)) return null
-  try {
-    const v = readFileSync(p, "utf8").trim()
-    return v.length ? v : null
-  } catch {
-    return null
-  }
+/**
+ * 读本会话的活跃轨迹 id（**按 scope**，不读全局落盘文件）。
+ *
+ * 为什么不再读 `AGENT_SESSIONS/.current`：见文件头注释（并发串台 + 陈旧残留）。
+ */
+function readCurrent(scope: string): string | null {
+  return getActiveTrajectory(scope)?.id ?? null
 }
 
 export function createContainerTrajectoryTool(cccRoot: string): SerenityTool {
@@ -139,14 +145,16 @@ export function createContainerTrajectoryTool(cccRoot: string): SerenityTool {
       "轨迹本体：list（清单+统计）/ show（读一条）/ create（建一条）/ use（激活，内联完整性检查）/ rebuild（原地重建，Ship of Theseus）/ send-now（即时投递，有回执）/ send-later（未来一次性投递，fire-and-forget）/ cro-guide（CRO 编写指南）。",
     input,
 
-    async execute(raw: Args) {
+    async execute(raw: Args, context?: unknown) {
       const a = raw ?? ({} as Args)
       const entries = listTrajectories(cccRoot)
+      /** 宿主会话 id（scope）—— 活跃轨迹按它隔离存储 */
+      const scope = String((context as { sessionID?: unknown } | undefined)?.sessionID ?? "")
 
       switch (a.action) {
         // ── list：清单 + 统计 ─────────────────────────────────
         case "list": {
-          const current = readCurrent(cccRoot)
+          const current = readCurrent(scope)
           const stale = entries.filter((e) => Date.now() - e.mtimeMs > 7 * 24 * 3600 * 1000)
           const lines = entries.map(
             (e) => `  ${e.id === current ? "▶" : " "} ${e.dirName}${e.hasSession ? "" : "  ⚠无SESSION.md"}`,
@@ -254,15 +262,24 @@ export function createContainerTrajectoryTool(cccRoot: string): SerenityTool {
           const idleDays = Math.floor((Date.now() - t.mtimeMs) / 86_400_000)
           if (idleDays > 7) checks.push(`⚠ 长期无活动（${idleDays} 天）`)
 
-          const prev = readCurrent(cccRoot)
-          if (prev && prev !== t.id && !a.force) {
+          // 绑定守卫：本会话已绑定别的轨迹 ⇒ 需 force（**按 scope 查，不看全局**）
+          const prev = getActiveTrajectory(scope)
+          if (prev && prev.id !== t.id && !a.force) {
             return {
-              output: { error: "binding_guard", previous: prev, target: t.id },
-              content: `⚠ 当前绑定为 ${prev}；切换到 ${t.id} 需 force=true`,
+              output: { error: "binding_guard", previous: prev.id, target: t.id },
+              content: `⚠ 当前绑定为 ${prev.id}；切换到 ${t.id} 需 force=true`,
             }
           }
 
-          writeFileSync(join(cccRoot, SESSIONS_DIRNAME, ".current"), `${t.id}\n`)
+          // 🔴 写**按会话隔离的内存状态**（不再写全局落盘 `.current` —— 见 active-trajectory.ts）
+          const resolved = resolveTrajectoryDir(cccRoot, t.dirName)
+          if (!resolved) {
+            return {
+              output: { error: "session_md_missing", dirName: t.dirName },
+              content: `✗ ${t.dirName} 缺 SESSION.md —— 拒绝激活（不制造半截状态）`,
+            }
+          }
+          setActiveTrajectory(scope, resolved)
 
           // 通过则静默（specs）；不通过则提示
           return {

@@ -1,10 +1,15 @@
 import { describe, it, expect, beforeEach } from "vitest"
+import { join } from "node:path"
 
-import { assembleBlocks, BLOCK_MARKERS, __resetInjectionState } from "../src/runtime/injection.js"
+import { assembleBlocks, BLOCK_MARKERS } from "../src/runtime/injection.js"
 import { detectRoot } from "../src/runtime/ccc.js"
 import { buildToolBlock } from "../src/runtime/blocks/tools.js"
 import { buildSessionBlock, resolveActiveSession } from "../src/runtime/blocks/session.js"
 import { buildSkillBlock, resolveEntrySkills } from "../src/runtime/blocks/skill.js"
+import {
+  setActiveTrajectory,
+  __resetActiveTrajectories,
+} from "../src/runtime/active-trajectory.js"
 
 const CCC = "/home/yh/home/home-serenity"
 
@@ -28,7 +33,9 @@ describe("ccc — detectRoot", () => {
 })
 
 describe("injection — assembleBlocks 装配序（specs §5.0）", () => {
-  beforeEach(() => __resetInjectionState())
+  beforeEach(() => {
+    __resetActiveTrajectories()
+  })
 
   it("装配序逐字对齐 specs：ACC→Metaphor→Principles→CCE→EAP→[状态]→[SKILL]→Tools→[Session]", () => {
     const blocks = assembleBlocks({ cccRoot: CCC, cccName: "home-serenity", existingTexts: [] })
@@ -55,7 +62,7 @@ describe("injection — assembleBlocks 装配序（specs §5.0）", () => {
     expect(heads.indexOf(BLOCK_MARKERS[4])).toBeLessThan(toolsIdx)
   })
 
-  it("幂等：已含标记头 ⇒ 不再产出该块（specs §5.0「同一会话不重复注入」）", () => {
+  it("幂等：已含标记头 ⇒ 不再产出该块（specs §5.6「标记头检测」）", () => {
     const existing = [BLOCK_MARKERS[0], BLOCK_MARKERS[1]]
     const blocks = assembleBlocks({ cccRoot: CCC, cccName: "home-serenity", existingTexts: existing })
     const heads = blocks.map((b) => b.split("\n")[0])
@@ -74,6 +81,40 @@ describe("injection — assembleBlocks 装配序（specs §5.0）", () => {
     // SKILL 块无标记头，可能仍在；但 8 个有标记头的块必须全部消失
     const heads = blocks.map((b) => b.split("\n")[0])
     for (const m of BLOCK_MARKERS) expect(heads).not.toContain(m)
+  })
+
+  // ── 🔴 多轮回归（2026-10-14 owner 报「注入有问题」的根因护栏）──────────
+  describe("🔴 多轮幂等（宿主每轮从零重建 system）", () => {
+    it("宿主每轮交来**干净 system**（无标记头）⇒ 每轮都必须重新产出全部块", () => {
+      // 实测：宿主两轮 hook 拿到的都是 4 段纯宿主内容（无任何 ACC 标记头）
+      // ⇒ 第 2 轮若因"内存记忆已注入"而跳过，ACC 提示词就会**从第 2 轮起消失**。
+      const turn1 = assembleBlocks({ cccRoot: CCC, cccName: "home-serenity", existingTexts: [] })
+      const turn2 = assembleBlocks({ cccRoot: CCC, cccName: "home-serenity", existingTexts: [] })
+
+      // 两轮产出必须**一致且非空**（不得因轮次而衰减）
+      expect(turn1.length).toBeGreaterThan(0)
+      expect(turn2.length).toBe(turn1.length)
+      expect(turn2.map((b) => b.split("\n")[0])).toEqual(turn1.map((b) => b.split("\n")[0]))
+    })
+
+    it("第 N 轮仍含 ACC 身份块（防「只在首轮出现」回归）", () => {
+      for (let turn = 1; turn <= 3; turn++) {
+        const blocks = assembleBlocks({ cccRoot: CCC, cccName: "home-serenity", existingTexts: [] })
+        expect(blocks.some((b) => b.startsWith(BLOCK_MARKERS[0]))).toBe(true)
+      }
+    })
+
+    it("宿主已带我们的标记头（真重复调用同一数组）⇒ 不重复 push", () => {
+      // 同一轮内若宿主把我们的产出再交回来，标记头检测应拦住
+      const first = assembleBlocks({ cccRoot: CCC, cccName: "home-serenity", existingTexts: [] })
+      const second = assembleBlocks({
+        cccRoot: CCC,
+        cccName: "home-serenity",
+        existingTexts: first.map((b) => b.split("\n")[0]),
+      })
+      const heads = second.map((b) => b.split("\n")[0])
+      for (const m of BLOCK_MARKERS) expect(heads).not.toContain(m)
+    })
   })
 
   it("ACC 身份块含适配层名与 CCC 名（specs §5.1 动态字段）", () => {
@@ -127,23 +168,55 @@ describe("blocks/tools — 块 8（specs §5.8）", () => {
 })
 
 describe("blocks/session — 块 9（specs §5.9）", () => {
-  it("真实 CCC + 存在的会话 ⇒ 产出块，含 SESSION.md 路径与 TRAJECTORY-ASSISTANT 预声明", () => {
-    const s = resolveActiveSession(CCC)
-    // .current 指向的会话可能不存在（负路径）⇒ 两种情形都合法
-    if (!s) {
-      expect(buildSessionBlock(CCC)).toBeNull()
-      return
-    }
-    const b = buildSessionBlock(CCC)!
-    expect(b).toContain(BLOCK_MARKERS_SESSION)
+  beforeEach(() => __resetActiveTrajectories())
+
+  it("无活跃轨迹 ⇒ 返回 null（整块省略，specs §5.9）", () => {
+    expect(buildSessionBlock("ses_none")).toBeNull()
+  })
+
+  it("已激活 ⇒ 产出块，含 SESSION.md 路径与 TRAJECTORY-ASSISTANT 预声明", () => {
+    setActiveTrajectory("ses_x", {
+      id: "S156",
+      dirName: "2026-09-06--S156--opencode-serenity 长期维护",
+      mdPath: join(CCC, "AGENT_SESSIONS/2026-09-06--S156--opencode-serenity 长期维护/SESSION.md"),
+    })
+
+    const b = buildSessionBlock("ses_x")!
+    expect(b).toContain("=== Serenity Session ===")
+    expect(b).toContain("Active session: S156")
     expect(b).toContain("SESSION.md path:")
     expect(b).toContain("TRAJECTORY-ASSISTANT:")
     expect(b).toContain("[TRAJECTORY-ASSISTANT-recorded-{code}]")
     expect(b).toContain("Read SESSION.md now to RESUME — not to audit")
+    // todowrite 首项（短名 = 去掉日期前缀与 S### 段）
+    expect(b).toContain('content: "SESSION: S156 — opencode-serenity 长期维护"')
   })
 
-  it("无活跃会话 ⇒ 返回 null（整块省略，specs §5.9）", () => {
-    expect(buildSessionBlock("/tmp")).toBeNull()
+  it("🔴 并发隔离：别的会话激活不影响本会话（防串台）", () => {
+    setActiveTrajectory("ses_A", {
+      id: "S156",
+      dirName: "2026-09-06--S156--x",
+      mdPath: "/tmp/x/SESSION.md",
+    })
+    expect(buildSessionBlock("ses_A")).not.toBeNull()
+    // 未激活的会话 ⇒ 整块省略（**不回退**到最近活跃值，否则就是串台）
+    expect(buildSessionBlock("ses_B")).toBeNull()
+  })
+
+  it("🔴 空 sessionID ⇒ 用最近活跃值（子代理继承场景）", () => {
+    setActiveTrajectory("ses_A", {
+      id: "S156",
+      dirName: "2026-09-06--S156--x",
+      mdPath: "/tmp/x/SESSION.md",
+    })
+    expect(buildSessionBlock("")).not.toBeNull()
+  })
+
+  it("🔴 不再依赖全局落盘 `.current`（陈旧残留曾导致静默整块省略）", () => {
+    // 即便磁盘上 .current 指向一个**不存在**的轨迹（实测 S055 即此情形），
+    // 只要本会话没有激活记录，就应视为无活跃轨迹 —— 而不是去读那个陈旧文件。
+    expect(resolveActiveSession("ses_never_activated")).toBeNull()
+    expect(buildSessionBlock("ses_never_activated")).toBeNull()
   })
 })
 

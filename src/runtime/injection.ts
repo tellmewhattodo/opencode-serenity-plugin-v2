@@ -5,13 +5,14 @@
  *   handler 收到 `SessionContext`（可变）：
  *     { sessionID, agent, model, options, system: Array<SystemPart>, messages, tools }
  *
- * 🔴 两条实测得来的关键纪律：
+ * 🔴 三条实测得来的关键纪律：
  *   1. **会话级 CCC 判定**：`ctx` 是插件实例级；CCC 判据必须取
  *      `session.get(sessionID).location.directory`（见 capability-mapping §10）。
- *   2. **幂等**：宿主每轮都会调用本 hook，且 system 里已有宿主自己的 part
- *      ⇒ 必须**按标记头去重**，否则会把 9 块重复 push（specs §5.0「幂等规则」）。
- *
- * SystemPart 形态（实证）：`{ type: "text", text: string }`
+ *   2. **幂等 = 只按标记头检测**（specs §5.6「同过标记头检测」）。
+ *   3. 🔴 **宿主每轮从零重建 `system`**（实测：两轮 hook 拿到的都是 4 段纯宿主内容，
+ *      无任何 ACC 标记头）⇒ **每轮都必须重新注入**，否则 ACC 提示词只在首轮出现。
+ *      故**不得**再按 sessionID 做"本会话已注入过"的内存去重（那是 v1 语境的遗留：
+ *      v1 的 system 数组跨轮持续，v2 的不持续）。
  */
 
 import { existsSync, readFileSync } from "node:fs"
@@ -37,14 +38,6 @@ export const BLOCK_MARKERS = [
   "=== Serenity Session ===",
 ] as const
 
-/** 已完成注入的会话（内存级幂等；会话重建/压缩后应重新注入） */
-const injected = new Set<string>()
-
-/** 供测试/诊断观察 */
-export function __resetInjectionState(): void {
-  injected.clear()
-}
-
 /** 从系统提示里读出已有文本（用于幂等检测） */
 function systemTexts(system: unknown): string[] {
   if (!Array.isArray(system)) return []
@@ -63,8 +56,9 @@ export function assembleBlocks(opts: {
   cccRoot: string
   cccName: string
   existingTexts: string[]
+  sessionID?: string
 }): string[] {
-  const { cccRoot, cccName, existingTexts } = opts
+  const { cccRoot, cccName, existingTexts, sessionID = "" } = opts
 
   /** 幂等：任一已有 part 含该标记头 ⇒ 视为已注入 */
   const already = (marker: string) => existingTexts.some((t) => t.includes(marker))
@@ -129,7 +123,8 @@ Additional MSMs registered by this CCC are available — call msm() with no argu
   push(BLOCK_MARKERS[6], buildToolBlock())
 
   // ── 块 9：Session（条件；specs §5.9）──────────────────────────
-  const sessionBlock = buildSessionBlock(cccRoot)
+  // 活跃轨迹 = **按会话隔离的内存状态**（见 blocks/session.ts 头注释）
+  const sessionBlock = buildSessionBlock(sessionID)
   if (sessionBlock) {
     push(BLOCK_MARKERS[7], sessionBlock)
   }
@@ -160,7 +155,10 @@ export async function registerInjection(
         sessionID,
         hasSystem: Array.isArray(it.system),
         systemLength: Array.isArray(it.system) ? it.system.length : null,
-        alreadyInjected: injected.has(sessionID),
+        existingMarkers: systemTexts(it.system)
+          .filter((t) => BLOCK_MARKERS.some((m) => t.includes(m)))
+          .map((t) => BLOCK_MARKERS.find((m) => t.includes(m)))
+          .slice(0, 3),
       })
     }
 
@@ -179,14 +177,15 @@ export async function registerInjection(
     }
     if (!cc.isContainer || !cc.root) return
 
-    // 幂等：本会话本轮已注入过则跳过（宿主每轮都会调用）
-    if (injected.has(sessionID)) return
-
+    // 🔴 幂等**只**按标记头检测（specs §5.6）——宿主每轮从零重建 system，
+    //    故每轮都会走到这里；若本轮宿主给的 system 里还没有我们的标记头，
+    //    就说明**这一轮确实需要重新注入**（不得按 sessionID 记忆"已注入"）。
     const existing = systemTexts(it.system)
     const blocks = assembleBlocks({
       cccRoot: cc.root,
       cccName: cc.name,
       existingTexts: existing,
+      sessionID,
     })
     if (diag) {
       evidence("inject-blocks", {
@@ -202,8 +201,6 @@ export async function registerInjection(
     for (const text of blocks) {
       ;(it.system as Array<{ type: string; text: string }>).push({ type: "text", text })
     }
-
-    injected.add(sessionID)
   })
 
   return [() => reg.dispose()]
