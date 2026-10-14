@@ -20,7 +20,10 @@ import type { ToolRegistrar, RootResolver, SerenityTool } from "./types.js"
 import { createDashboardTool } from "./dashboard.js"
 import { createContainerFsTool } from "./container_fs.js"
 import { createContainerGitTool } from "./container_git.js"
+import { createContainerTrajectoryTool } from "./container_trajectory.js"
+import { createContainerAdminTool } from "./container_admin.js"
 import { createMsmTool } from "./msm.js"
+import { createPraxisTool } from "./praxis.js"
 
 /**
  * 注册全部工具。
@@ -62,9 +65,11 @@ export async function registerTools(
     createDashboardTool(),
     needsRoot(createContainerFsTool),
     needsRoot(createContainerGitTool),
+    needsRoot(createContainerTrajectoryTool),
+    needsRoot(createContainerAdminTool),
     needsRoot(createMsmTool),
-    // 后续（objective 剩余）：container_trajectory / container_admin /
-    //   praxis / handyman / resident / logbook
+    needsRoot(createPraxisTool),
+    // 后续（objective 剩余）：handyman / resident / logbook
   ]
 
   const registrations = await Promise.all(

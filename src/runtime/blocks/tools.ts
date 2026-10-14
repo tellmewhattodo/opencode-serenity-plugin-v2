@@ -14,9 +14,12 @@
 /** 已实现的工具行（随实现推进而增补；镜像纪律：与实现逐字一致） */
 const IMPLEMENTED_TOOL_LINES: string[] = [
   "  container_fs — container filesystem operations (15 subcommands: root/resolve/exists/list/tree/relative/mkdir/rm/mv/cp/touch/append/reveal/info/find)",
-  "  container_git— git operations (status/commit/push/log; commit auto-pushes unless noPush; paths limits the commit; push success requires a ref line from --porcelain)",
+  "  container_git— git operations (status/commit/push/log/pull/diff; commit auto-pushes unless noPush)",
+  "  container_trajectory — one trajectory: its persistent body (SESSION.md) + its timeline. list / show / create / use (activate; inline integrity check) / rebuild (clear-and-rebuild in place, Ship of Theseus) / send-now (deliver RIGHT NOW; synchronous receipt) / send-later (one future instant; fire-and-forget — no recall) / cro-guide",
+  "  container_admin — container administration (the maintenance bay): role (Skiff roles) / msm (register/deregister/check/guide/catalog/ccc-config) / config (view)",
   "  dashboard    — always-on container instruments: health (CCC three-principle check + registry integrity) / time (now) / wait (N seconds)",
   "  msm          — execute a registered CCC MSM: msm(name, args); partial name returns candidates; inspect=true shows usage",
+  "  praxis       — actionable theory injection: praxis (index) / praxis eap / praxis neat / praxis cce / praxis ontology",
 ]
 
 /** msm 调用协议（4 行，specs §5.8 要求） */
