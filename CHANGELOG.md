@@ -1,0 +1,59 @@
+# 更新日志
+
+## v0.1.0 — opencode v2 首个可用版本
+
+> **定位**：opencode v2 插件体系上的 Serenity ACC **全契约面**实现。
+> 与 v1（`@shgroup/opencode-serenity-plugin`，已冻结）**代码独立** —— v2 插件 API 是全新体系
+> （`Plugin.define` + 域 transform/hook，命令式注册），v1 的 hooks 形态无法平移。
+
+### 工具面 — 9 契约工具（specs §4.1）
+
+`container_fs`（15 子命令）/ `container_git`（6 动作）/ `container_trajectory`（8 动作）/
+`container_admin`（role/msm/config）/ `dashboard` / `msm` / `praxis` /
+`handyman` / `resident`
+
+- **路径守卫**（RR5）：所有文件操作限定 CCC 根内，逃逸自动阻断
+  - 判据用 `path.relative()` 而非前缀比较 —— 前缀比较有经典陷阱（`/root` 与 `/root-evil` 共享前缀）
+- `container_git`：commit 默认随后自动 push；**push 成功判据 = `--porcelain` stdout 有 ref 行**
+  （不用"stderr 为空"—— 实证该判据会把超时误报为成功）
+- `handyman`：前台并行上限 10（硬编码），**超限拒绝且一个都不起**
+- `container_trajectory`：`send-later` 回执显式声明 fire-and-forget（无回执/不可回收）
+
+### 注入面 — 9 块（specs §5.0–§5.9）
+
+装配序：**ACC → Metaphor → Principles → CCE → EAP → [状态] → [SKILL] → Tools → [Session]**
+
+- 落点 = `ctx.session.hook("context")`（`system: Array<SystemPart>` 可写）
+- **幂等**：按标记头检测 + 会话级去重（specs §5.0）
+- SKILL 块含**第二层披露树**（references 一级条目 + `skill.ttl`，只给名/首标题/字节）
+- Session 块含 **TRAJECTORY-ASSISTANT 预声明**（机制先于提醒）
+
+### 机制面 — 三项
+
+1. **registry 写保护**（`tool.hook("execute.before")`）
+   - 🔴 payload **无决策字段** ⇒ 唯一可靠阻断 = **抛异常**（改 input 只是绕过）
+   - 判据 = basename 命中（不依赖 cwd）+ 深挖嵌套 + 去环
+2. **rebuild**（`session.hook("compaction")`）
+   - 🔴 v2 独有优势：`result` 可直设 ⇒ **跳过模型请求**
+   - 两段式：登记 pending → 压缩时消费；锚点含 RESUME-not-audit
+3. **trajectory-assistant**
+   - 计分（write/edit=3、task=10、read/grep/glob/msm=1、+1/分钟）+ 阈值提醒
+   - token：`CHECKPOINT`（有 ACK）/ `LOGBOOK COMPACTION` / `SCRATCH PRUNE`
+   - 🔴 三条硬规矩：两 token 刻意分开 / 体积提醒含 frontmatter 护栏 / **只提醒不代写代删**
+
+### 架构要点（实测得出）
+
+- **会话级 CCC 判定**：`ctx` 是**插件实例级**的（`location.directory` = 服务进程 cwd），
+  ACC 语义是**会话级**的 ⇒ 判据取 `session.get(sessionID).location.directory`
+- **注册与判定解耦**：工具注册在宿主级；激活判定下沉到 execute 时（经 `ToolContext.sessionID`）
+  与注入面 —— 与 specs §4.1「域外全局隐藏」语义一致
+
+### 测试
+
+**104 个测试全绿**（5 个文件）：
+注入 18 / container_fs 28 / 轨迹 23 / 委派 10 / 机制 25
+
+### 装载验证
+
+- 宿主 `@opencode/cli@2.0.28` + SDK `@opencode/plugin@2.0.28`
+- 实测：工具注册 **9/9**（宿主工具总数 23→31）；注入 **9/9 块**；机制 **4/4 注册项**
