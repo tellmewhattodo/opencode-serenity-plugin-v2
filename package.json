@@ -1,6 +1,6 @@
 {
   "name": "@shgroup/opencode-serenity-plugin-v2",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": false,
   "description": "Serenity — 为 OpenCode v2 Agent 提供认知容器 (CCC) 基础设施。基于 @opencode/plugin v2 API（Plugin.define + Context 域）。",
   "type": "module",

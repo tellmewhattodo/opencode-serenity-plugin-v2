@@ -1,5 +1,42 @@
 # 更新日志
 
+## v0.1.2 — 工具面致命修复（所有工具调用都失败）
+
+### 修复
+
+- 🔴🔴 **9 个契约工具全部缺少 `output` schema 声明 ⇒ 每一次调用都失败**（owner 实测发现）
+  - **根因**（反编译宿主二进制所得契约，逐字）——宿主对 `Tool.Result` 的判定是**二元的**：
+    ```js
+    if (tool.output === undefined) {
+      if ("output" in result) fail("Tool result declared output without an output schema")
+      return { output: undefined, content, ... }
+    }
+    if (!("output" in result)) fail("Tool did not return its declared output")
+    ```
+    **两头堵**：声明了 `output` 就必须返回 `output`；没声明就不许返回 `output`。
+  - 我们的工具**全部**返回 `{ output, content }` 却都没声明 ⇒ 命中第一条 ⇒ **每次调用都失败**。
+    用户侧看到的就是「工具调用有报错」（v0.1.0 / v0.1.1 均如此）。
+  - **判据**（owner 会话实录，非推测）：`session.context` 中该 assistant 消息带
+    `metadata.toolCalls[].status = "error"`，`content` 文本 = `Tool result declared output without an output schema`。
+  - 🔴 **为何藏得久**：该错误**不落 `opencode.log`**，只进会话消息 metadata ⇒ 只看日志会以为"无异常"。
+  - **修法**：新增 `src/tools/output-schema.ts`（宽松对象 schema，`additionalProperties: true`），
+    在**注册的最后一跳**统一补声明 ⇒ 单点、新增工具自动覆盖。
+    选「声明 schema」而非「删掉 `output`」：工具刻意产出结构化数据（code-mode 里
+    `tools.container_fs(...)` 直接消费对象），删掉会降能力并丢掉 `output.error` 等机器可判字段。
+  - ⚠️ **v1 不受影响**：v1 的工具契约里**没有** `output` 概念（只返回 content）⇒ 这是 v2 引入
+    `output`/`content` 二分后的**新缺陷**。
+
+### 测试
+
+- 125 → **133**（+8，全部为返回值契约护栏）
+  - 新增 `hostValidateResult()`：**把宿主判定复刻成可测函数**（含两条反例自证）
+  - 9 工具全部声明 `output` schema；工具名与 specs §4.1 一致
+  - `container_fs` 各子命令（含错误分支、逃逸分支）的返回值全部过宿主判定
+  - 每个工具的 `not_in_ccc` 分支也过判定（`needsRoot` 包装路径）
+- 🔴 **方法论教训**：测试最初断言**各工具工厂的裸产物**而失败 —— 恰好暴露
+  「测的不是宿主真收到的那批对象」（`withOutputSchema` / `needsRoot` 都是**注册期**才包的）。
+  现改为对 `buildTools()` 的产物断言（并为此把该函数抽出导出）。
+
 ## v0.1.1 — 注入正确性修复
 
 ### 修复
