@@ -1,5 +1,19 @@
 # 更新日志
 
+## v0.1.1 — 未发布（发布前请先 bump package.json）
+
+### 修复
+
+- 🔴 **`diagnostics` 改为 opt-in（默认关）** —— v0.1.0 默认开，导致**包被宿主加载时向用户机器写 `/tmp/serenity-v2-load/`**
+  - 新判据：`SERENITY_V2_DIAG=1` 才启用（旧判据 `SERENITY_V2_NO_DIAG !== "1"` 默认开）
+  - 落点可用 `SERENITY_V2_DIAG_DIR` 覆写
+  - 影响：**不改 API**；仅影响开发期取证文件的落盘与否
+  - 理由：插件在用户机器上是静默后台进程，默认写 `/tmp` 属**未被请求的副作用**；源码注释早已写「发布前应改为 opt-in」，本次补齐
+
+### 测试
+
+- 104 → **107**（新增 3 条 diagnostics 护栏：默认关 / 置 `"1"` 开 / 其它值仍关）
+
 ## v0.1.0 — opencode v2 首个可用版本
 
 > **定位**：opencode v2 插件体系上的 Serenity ACC **全契约面**实现。
