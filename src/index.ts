@@ -22,7 +22,7 @@ import { Plugin } from "@opencode/plugin"
 
 import { registerTools } from "./tools/index.js"
 import { registerInjection } from "./runtime/injection.js"
-import { registerRegistryGuard } from "./runtime/registry-guard.js"
+import { registerWriteGuard } from "./runtime/guards.js"
 import { registerRebuild } from "./runtime/rebuild.js"
 import { registerTrajectoryAssistant } from "./runtime/trajectory-assistant.js"
 import { detectContainer } from "./runtime/ccc.js"
@@ -82,11 +82,12 @@ export const SerenityPlugin = Plugin.define({
     // ── 阶段 3：机制面（三项）──────────────────────────────────
     const mechDisposers: Array<() => Promise<void>> = []
 
-    // ① registry 写保护（tool.hook("execute.before")）
-    await registerRegistryGuard(ctx)
+    // ① safe-mode 守卫（tool.hook("execute.before")）——
+    //    合并四项：治理文件（§5.6）/ MSM 注册表（§4.3）/ blacklist（§3.1）/ bash 禁用（§5.6）
+    await registerWriteGuard(ctx)
       .then((d) => mechDisposers.push(...d))
       .catch((e) => {
-        if (diag) evidence("registry-guard-error", { error: String(e) })
+        if (diag) evidence("write-guard-error", { error: String(e) })
       })
 
     // ② rebuild（session.hook("compaction")；result 可直设 ⇒ 跳过模型请求）
@@ -107,7 +108,7 @@ export const SerenityPlugin = Plugin.define({
       evidence("mechanisms", {
         at: new Date().toISOString(),
         registered: mechDisposers.length,
-        expected: 4, // registry-guard 1 + rebuild 1 + assistant 2
+        expected: 4, // write-guard 1 + rebuild 1 + assistant 2
       })
     }
 

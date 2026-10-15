@@ -25,6 +25,9 @@ import { buildToolBlock } from "./blocks/tools.js"
 import { buildSessionBlock } from "./blocks/session.js"
 import { buildSkillBlock } from "./blocks/skill.js"
 import { detectContainer } from "./ccc.js"
+// 🔴 判据与**拦截面**同源（`write-guard.ts` 也从这里取）—— 见 safe-mode.ts 头注释：
+//    注入面与拦截面若各自读配置，就可能给出不同答案 ⇒ 提示词宣称了不存在的保护。
+import { isSafeModeOn, readBlacklistDisplay } from "./safe-mode.js"
 
 /** 块标记头（specs §5.0 表；用于幂等检测）—— 唯一真相源 */
 export const BLOCK_MARKERS = [
@@ -113,10 +116,14 @@ Additional MSMs registered by this CCC are available — call msm() with no argu
 
   // ── 块 6：状态块（条件；specs §5.6 —— **独立两块**，各自条件）────
   // 6a. Safe Mode（marker 不在 ⇒ 整块省略）
-  const safeMode = existsSync(join(cccRoot, ".serenity-safe-on"))
+  // 🔴 判据 = `isSafeModeOn()`（safe-mode.ts），与 `write-guard.ts` 的拦截面**同源** ——
+  //    本块文本向模型**宣称**保护；宣称与拦截必须是同一个判据，否则就是假陈述。
+  const safeMode = isSafeModeOn(cccRoot)
   if (safeMode) {
     // 🔴 有黑名单时追加一行（规则为空 ⇒ 该行不出现）——块内**唯一**的字段级差异
-    const rules = readBlacklistRules(cccRoot)
+    //    展示取自 `readBlacklistDisplay()`（与拦截用的 `readBlacklist()` 同源）⇒
+    //    `{ pattern, message }` 形态的条目**也会出现在这一行**（否则模型看不到它却会被它拦）
+    const rules = readBlacklistDisplay(cccRoot)
     const text = rules.length
       ? `${SAFE_MODE_BLOCK}\nActive blacklist rules: ${rules.join(", ")}`
       : SAFE_MODE_BLOCK
@@ -352,7 +359,13 @@ value of a thought equals its external reconstructability):
   • S↑ Stable — structures regenerate repeatably, no reliance on implicit
     context`
 
-const SAFE_MODE_BLOCK = `=== Serenity Safe Mode ===
+/**
+ * 块 6a：Safe Mode 文本（specs §5.6 **逐字**，不得改写）。
+ *
+ * 🔴 导出以供**元判据测试**（`tests/safe-mode.test.ts`）：本块向模型**宣称**的保护，
+ *   必须逐条对应 `write-guard.ts` 里**真实存在**的拦截（宣称与实现不得脱节）。
+ */
+export const SAFE_MODE_BLOCK = `=== Serenity Safe Mode ===
 Safe mode is ON (enabled by the user). It makes the vessel unattended-capable —
 the hull holds its course without a watch on deck: you may work with fuller
 freedom, pushing work forward autonomously without pausing for approval at
@@ -381,27 +394,6 @@ localstore.json is a LOCAL private file (gitTrack=deny) — it is force-ignored 
 Sensitive data may live in this file, but ONLY in this file: keep credentials and
 secret values confined to localstore.json — never leak them into other files,
 conversation, or logs. Never attempt to commit it.`
-
-/**
- * 读 CCC 的 safe-mode 黑名单规则（specs §5.6：有规则才追加 `Active blacklist rules:` 行）。
- *
- * 来源 = `.opencode/serenity.json` 的 `safeMode.blacklist`。
- * 读不到 / 为空 ⇒ 返回 []（该行不出现 —— 这是块内**唯一**的字段级差异）。
- */
-function readBlacklistRules(cccRoot: string): string[] {
-  try {
-    const p = join(cccRoot, ".opencode", "serenity.json")
-    if (!existsSync(p)) return []
-    const cfg = JSON.parse(readFileSync(p, "utf8")) as {
-      safeMode?: { blacklist?: unknown }
-    }
-    const list = cfg?.safeMode?.blacklist
-    if (!Array.isArray(list)) return []
-    return list.filter((r): r is string => typeof r === "string" && r.trim().length > 0)
-  } catch {
-    return []
-  }
-}
 
 /**
  * 读 CCC 的 localstore git 策略（specs §5.6 块 6b 的触发条件）。

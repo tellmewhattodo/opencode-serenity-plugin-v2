@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest"
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 
-import { hitsProtectedRegistry } from "../src/runtime/registry-guard.js"
 import { diagnosticsEnabled } from "../src/runtime/diagnostics.js"
 import { ACC_VERSION } from "../src/version.js"
 import {
@@ -33,47 +32,11 @@ afterEach(() => {
 })
 
 // ─────────────────────────────────────────────────────────────
-// registry 写保护（specs §4.3 / §5.8）
+// 🔴 registry 写保护（specs §4.3 / §5.8）—— 本组测试 2026-10-15 **迁移**至
+//    `tests/safe-mode.test.ts`（守卫合并为「写保护 guard」后，三者共用同一个决策函数
+//    `decideWriteGuard`；在此处保留一份会造成"同一行为两处断言"的冗余真相源）。
+//    该文件同时承载**元判据**测试（提示词宣称的保护必须真有实现）。
 // ─────────────────────────────────────────────────────────────
-describe("registry-guard — 命中判定", () => {
-  it("write 工具 + mech-registry.json 绝对路径 ⇒ 命中", () => {
-    const r = hitsProtectedRegistry("write", {
-      filePath: "/home/yh/home/home-serenity/.opencode/skills/home-serenity/references/mech-registry.json",
-    })
-    expect(r.hit).toBe(true)
-  })
-
-  it("edit 工具 + 相对路径 ⇒ 命中（按 basename 判定，不依赖 cwd）", () => {
-    expect(hitsProtectedRegistry("edit", { filePath: "references/mech-registry.json" }).hit).toBe(true)
-  })
-
-  it("🔴 read 工具 ⇒ 不拦（只拦写，读是允许的）", () => {
-    expect(
-      hitsProtectedRegistry("read", { filePath: "references/mech-registry.json" }).hit,
-    ).toBe(false)
-  })
-
-  it("写其它文件 ⇒ 不命中", () => {
-    expect(hitsProtectedRegistry("write", { filePath: "docs/other.md" }).hit).toBe(false)
-  })
-
-  it("嵌套 input（数组/对象）里的路径也能被深挖出来", () => {
-    const r = hitsProtectedRegistry("patch", { edits: [{ path: "a/mech-registry.json" }] })
-    expect(r.hit).toBe(true)
-  })
-
-  it("空 input / 无路径 ⇒ 不命中（不误报）", () => {
-    expect(hitsProtectedRegistry("write", {}).hit).toBe(false)
-    expect(hitsProtectedRegistry("write", undefined).hit).toBe(false)
-    expect(hitsProtectedRegistry("write", { content: "hello world" }).hit).toBe(false)
-  })
-
-  it("🔴 循环引用 input 不致死循环（有 seen 去环 + guard 上限）", () => {
-    const a: Record<string, unknown> = { filePath: "x" }
-    a.self = a
-    expect(() => hitsProtectedRegistry("write", a)).not.toThrow()
-  })
-})
 
 // ─────────────────────────────────────────────────────────────
 // rebuild（specs §4.1 / §5.9）

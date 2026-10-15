@@ -1,5 +1,84 @@
 # 更新日志
 
+## v0.1.3 — safe-mode 保护实装 + 发布物卫生修复
+
+### 修复
+
+- 🔴🔴 **提示词"宣称"了 v2 根本没有的保护**（owner 报「safe-mode 标记开关实现有问题」）
+  - **假陈述比缺功能更严重**：块 6 文本（specs §5.6 逐字）向模型宣称三项保护，而实现**一项都没有**
+    ⇒ 模型据此认为自己受保护。
+    | 宣称（块 6 原文） | specs 依据 | v0.1.2 实现 |
+    |---|---|---|
+    | `CCC governance files (.serenity, .serenity-safe-on) are protected from agent writes` | §5.6 | ❌ **无** |
+    | `blacklist rules apply to file paths` | §3.1(a) + §5.6 | ❌ **无**（只**读**黑名单去拼注入文本，不拦） |
+    | `bash is disabled (hidden and blocked)` | §5.6 | ❌ **无** |
+  - **根因（结构性）**：**"决定要不要注入这段文本"与"决定要不要真的拦"是两处代码**，
+    各自读配置 ⇒ 可以给出不同答案，且**没有任何机械信号**会报警。
+  - **修法（两条）**：
+    1. 新增 `src/runtime/safe-mode.ts` —— 标记判定与黑名单解析的**唯一实现**；
+       **注入面与拦截面都从这里取判据**（`injection.ts` 与 `guards.ts` 不再各自解析）
+       ⇒ 物理上不可能再出现"宣称与实现不一致"。
+    2. 新增 `src/runtime/guards.ts`（合并旧 `registry-guard.ts`，旧文件删除）——
+       在一个 `tool.hook("execute.before")` 缝上统一四类保护：
+       治理文件 / MSM 注册表 / 黑名单 / bash 禁用。
+
+- 🔴 **旧 registry-guard 的两处真实漏放**（合并时一并修掉）
+  - **`container_fs` 完全绕过守卫**：旧实现只按**工具名**筛（`WRITE_TOOLS` 不含 `container_fs`）
+    ⇒ `container_fs rm <...>/mech-registry.json`、`container_fs rm .serenity` **不被拦**。
+    现按**子命令**判写类（`mkdir/rm/mv/cp/touch/append`），对齐 dsp `CC_FS_WRITE_ACTIONS`。
+  - **`{ pattern, message }` 形态的黑名单条目在展示面被漏掉**：旧解析只认 string 条目
+    ⇒ 该形态规则**会被拦、却不出现在注入的 `Active blacklist rules:` 行里**（反向的不一致）。
+    现展示面与拦截面**同源**（`readBlacklistDisplay()` 从同一批 rule 取 pattern）。
+
+- 🔴 **发布物携带已删除源的陈旧产物**（发布纪律缺陷，真读数取证）
+  - **取证**：下载 npm 上的 `0.1.2` tarball 解包逐项列举 ⇒ 含三个**源文件早已删除**的产物：
+    `dist/runtime/registry-guard.js`、`dist/runtime/container.js`、
+    `dist/runtime/injection-probe.js`（开发期探针，其自身文件头写着「结论写入 docs 后本文件可删」）。
+  - **根因**：`tsc` **只增不删**；`dist/` 被 `.gitignore` 忽略（**本地看不见**）却在
+    `files: ["dist"]` 里（**会发布**）⇒ 缺陷对开发者不可见，只对用户可见。
+    影响不止"多几个废文件"：发布包里带着**已废弃实现**与**会在 `SERENITY_V2_DIAG=1` 时
+    向用户机器 `/tmp` 写文件的探针**（与 v0.1.1 修过的问题同类）。
+  - **修法（两层）**：① `build` 前置 `clean`（治存量）；② 新增 `tests/publish-hygiene.test.ts`
+    把"`dist` 必须与 `src` 双向一一对应"变成**机械判据**（治增量 —— 直接跑 `tsc` 会绕过 ①）。
+
+### 变更
+
+- `registry-guard.ts` → **`guards.ts`**（重命名 + 扩展；旧文件删除）。旧名在合并后已不副实。
+- **黑名单只在 safe-mode ON 时生效**（对齐 §5.6 块内承诺：该声明只在块 6 被注入时出现）。
+
+### 测试
+
+- 133 → **183**（+50）
+  - `tests/safe-mode.test.ts`（**+53**）：标记判定 / 黑名单两形态 / 写类与 shell 判定 /
+    路径提取 / 三类保护的正面与**反向**断言（读放行、非 CCC 行为、同名文件不误伤）
+  - `tests/publish-hygiene.test.ts`（**+4**）：dist ↔ src 双向一一对应 + 已退役模块点名回归
+- 🔴🔴 **新增元判据测试**（本轮缺陷的直接护栏）：**提示词里宣称的保护，必须真有对应实现**。
+  - 从块 6 文本**解析出**承诺 → 逐条要求能跑出一个真实的 deny（不是"源码里有这个名字"）
+  - **反向断言**：文本里出现的每个保护关键词都必须在证明表里有条目
+    ⇒ "改了提示词却忘了实现"会立刻变红（本轮缺陷正是这个形状：文本宣称三条、实现零条）
+  - **已验齿**：用变异探针（临时清空 `GOVERNANCE_BASENAMES`）确认该测试会红并给出
+    `宣称的保护「governance files」没有对应的实现` —— **不能变红的测试不是测试**。
+  - 与"测试测了工厂产物而非注册产物"同族：**测的东西与被断言的东西不是同一个**。
+
+### 接线级验证（非纯函数）
+
+- 真 CCC 上走 `registerWriteGuard` **真实代码路径**（注册回调 → 解析会话根 → 决策 → 抛异常），
+  **10/10 通过**：
+  - 拒绝：写 `.serenity` / `.serenity-safe-on`（含绝对路径）、`container_fs rm .serenity`、
+    写 `mech-registry.json`、`bash`（真 CCC 带 safe-mode 标记）
+  - **放行（对照组，证明不是"一律拒绝"）**：读 `.serenity`、写普通文件、
+    `container_fs list` 只读子命令、非 CCC 会话 + bash
+  - 非 CCC 会话 + 写 `.serenity` ⇒ **仍拒绝**（治理文件判定不依赖根）
+
+### 已知缺口（未实现，诚实记录）
+
+- `bash` 的 **hidden 面**未实现：本缝只做"**调用期拒绝**"，specs §5.6 期望的是
+  "hidden **and** blocked"。hidden 需宿主工具收窄缝 —— 与 `safeMode.hiddenTools`
+  （§4.1「条件屏蔽」：**从 schema 移除**而非调用期拒绝）是**同一项**。
+  当前 = **blocked ✓ / hidden ✗**；该事实由元判据测试**显式锁定**（补上时会变红，从而必须回来更新声明）。
+- `safeMode.hiddenTools` 条件隐藏：未实现（同上）。
+- 域外全局隐藏（specs §4.1）：未实现（`ToolEditor.remove` 通路待验证）。
+
 ## v0.1.2 — 工具面致命修复（所有工具调用都失败）
 
 ### 修复
