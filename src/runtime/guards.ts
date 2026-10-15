@@ -248,7 +248,7 @@ export function isShellCall(tool: string): boolean {
  * @param root CCC 根；`null` ⇒ 拿不到根（仍执行**不依赖根**的 ①② 两条保护；
  *             ③④ 需要根才能判 safe-mode 开关 / 算相对路径 ⇒ 无根时跳过）
  */
-export function decideWriteGuard(opts: {
+export function decideGuard(opts: {
   root: string | null
   tool: string
   input: unknown
@@ -349,7 +349,7 @@ export function decideWriteGuard(opts: {
  *
  * @returns disposers
  */
-export async function registerWriteGuard(
+export async function registerGuards(
   ctx: ToolHookRegistrar & SessionHookRegistrar,
 ): Promise<Array<() => Promise<void>>> {
   const reg = await ctx.tool.hook("execute.before", async (event: unknown) => {
@@ -370,7 +370,7 @@ export async function registerWriteGuard(
       root = null
     }
 
-    const d = decideWriteGuard({ root, tool, input: e?.input })
+    const d = decideGuard({ root, tool, input: e?.input })
     if (d.kind === "deny" && d.reason) {
       // 🔴 唯一可靠的阻断 = 抛异常（见文件头注释）
       throw new Error(d.reason)

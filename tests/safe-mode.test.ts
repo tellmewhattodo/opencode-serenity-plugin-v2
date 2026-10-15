@@ -4,7 +4,7 @@
  * 本文件的两个目的（EAP · R↓）：
  *
  *   A. **行为测试** —— 治理文件写保护 / 黑名单写拦截 / 注册表保护，
- *      三者在**同一个 `execute.before` 决策函数**（`decideWriteGuard`）上逐条验证。
+ *      三者在**同一个 `execute.before` 决策函数**（`decideGuard`）上逐条验证。
  *
  *   B. 🔴 **元判据测试**（本轮缺陷的直接护栏）——
  *      **提示词里宣称的保护，必须真有对应实现**（宣称与实现不得脱节）。
@@ -31,7 +31,7 @@ import {
   matchBlacklist,
 } from "../src/runtime/safe-mode.js"
 import {
-  decideWriteGuard,
+  decideGuard,
   extractPaths,
   relFromRoot,
   isWriteCall,
@@ -185,7 +185,7 @@ describe("safe-mode — 黑名单匹配", () => {
 // 路径提取与写类判定
 // ─────────────────────────────────────────────────────────────
 
-describe("write-guard — 写类判定", () => {
+describe("guards — 写类判定", () => {
   it("原生写工具 ⇒ 写类；读工具 ⇒ 非写类", () => {
     for (const t of ["write", "edit", "patch", "multiedit", "str_replace_editor", "append", "touch"]) {
       expect(isWriteCall(t, {})).toBe(true)
@@ -209,7 +209,7 @@ describe("write-guard — 写类判定", () => {
   })
 })
 
-describe("write-guard — 路径提取", () => {
+describe("guards — 路径提取", () => {
   it("取出路径键的值（含数组与嵌套）", () => {
     expect(extractPaths({ filePath: "a/b.md" })).toContain("a/b.md")
     expect(extractPaths({ paths: ["x", "y"] })).toEqual(expect.arrayContaining(["x", "y"]))
@@ -254,13 +254,13 @@ describe("🔴 治理文件写保护（specs §5.6：reserved for the user）", 
   beforeEach(() => fixture({ marker: true }))
 
   it("write `.serenity` ⇒ deny", () => {
-    const d = decideWriteGuard({ root: fx.root, tool: "write", input: { filePath: ".serenity" } })
+    const d = decideGuard({ root: fx.root, tool: "write", input: { filePath: ".serenity" } })
     expect(d.kind).toBe("deny")
     expect(d.rule).toBe("governance")
   })
 
   it("write `.serenity-safe-on` ⇒ deny", () => {
-    const d = decideWriteGuard({
+    const d = decideGuard({
       root: fx.root,
       tool: "write",
       input: { filePath: ".serenity-safe-on" },
@@ -271,21 +271,21 @@ describe("🔴 治理文件写保护（specs §5.6：reserved for the user）", 
 
   it("🔴 绝对路径 / 嵌套路径同样命中（不依赖 cwd）", () => {
     expect(
-      decideWriteGuard({ root: fx.root, tool: "edit", input: { filePath: `${fx.root}/.serenity` } }).kind,
+      decideGuard({ root: fx.root, tool: "edit", input: { filePath: `${fx.root}/.serenity` } }).kind,
     ).toBe("deny")
     expect(
-      decideWriteGuard({ root: fx.root, tool: "patch", input: { edits: [{ path: "a/.serenity" }] } }).kind,
+      decideGuard({ root: fx.root, tool: "patch", input: { edits: [{ path: "a/.serenity" }] } }).kind,
     ).toBe("deny")
   })
 
   it("🔴 拦的是**写**：read `.serenity` 放行（读是允许的）", () => {
     expect(
-      decideWriteGuard({ root: fx.root, tool: "read", input: { filePath: ".serenity" } }).kind,
+      decideGuard({ root: fx.root, tool: "read", input: { filePath: ".serenity" } }).kind,
     ).toBe("allow")
   })
 
   it("🔴 container_fs rm 治理文件也拦（删掉标记 = 拆掉 CCC 根）", () => {
-    const d = decideWriteGuard({
+    const d = decideGuard({
       root: fx.root,
       tool: "container_fs",
       input: { action: "rm", path: ".serenity" },
@@ -298,19 +298,19 @@ describe("🔴 治理文件写保护（specs §5.6：reserved for the user）", 
     fx.setSafeMode(false)
     expect(isSafeModeOn(fx.root)).toBe(false)
     expect(
-      decideWriteGuard({ root: fx.root, tool: "write", input: { filePath: ".serenity" } }).kind,
+      decideGuard({ root: fx.root, tool: "write", input: { filePath: ".serenity" } }).kind,
     ).toBe("deny")
   })
 
   it("🔴 即使拿不到 CCC 根也拦得住（治理文件判定只用 basename）", () => {
     expect(
-      decideWriteGuard({ root: null, tool: "write", input: { filePath: ".serenity-safe-on" } }).kind,
+      decideGuard({ root: null, tool: "write", input: { filePath: ".serenity-safe-on" } }).kind,
     ).toBe("deny")
   })
 
   it("写同名的普通文件（`.serenity-backup`）⇒ 不拦（不是同一个文件）", () => {
     expect(
-      decideWriteGuard({ root: fx.root, tool: "write", input: { filePath: ".serenity-backup" } }).kind,
+      decideGuard({ root: fx.root, tool: "write", input: { filePath: ".serenity-backup" } }).kind,
     ).toBe("allow")
   })
 })
@@ -323,7 +323,7 @@ describe("MSM 注册表写保护（specs §4.3）", () => {
   beforeEach(() => fixture({ marker: false }))
 
   it("write 注册表（绝对/相对/嵌套）⇒ deny，且给出合规路径", () => {
-    const d = decideWriteGuard({
+    const d = decideGuard({
       root: fx.root,
       tool: "write",
       input: { filePath: ".opencode/skills/home-serenity/references/mech-registry.json" },
@@ -335,14 +335,14 @@ describe("MSM 注册表写保护（specs §4.3）", () => {
 
   it("read 注册表 ⇒ 放行（注册表是结构核心不是秘密）", () => {
     expect(
-      decideWriteGuard({ root: fx.root, tool: "read", input: { filePath: "references/mech-registry.json" } })
+      decideGuard({ root: fx.root, tool: "read", input: { filePath: "references/mech-registry.json" } })
         .kind,
     ).toBe("allow")
   })
 
   it("🔴 container_fs rm 注册表也拦（旧实现漏掉的口子）", () => {
     expect(
-      decideWriteGuard({
+      decideGuard({
         root: fx.root,
         tool: "container_fs",
         input: { action: "rm", path: "references/mech-registry.json" },
@@ -352,7 +352,7 @@ describe("MSM 注册表写保护（specs §4.3）", () => {
 
   it("写其它文件 ⇒ 不拦", () => {
     expect(
-      decideWriteGuard({ root: fx.root, tool: "write", input: { filePath: "docs/other.md" } }).kind,
+      decideGuard({ root: fx.root, tool: "write", input: { filePath: "docs/other.md" } }).kind,
     ).toBe("allow")
   })
 })
@@ -364,7 +364,7 @@ describe("MSM 注册表写保护（specs §4.3）", () => {
 describe("🔴 黑名单写拦截（specs §3.1 + §5.6 门控）", () => {
   it("safe-mode ON + 命中前缀 ⇒ deny", () => {
     fixture({ marker: true, safeMode: { blacklist: [".secrets/"] } })
-    const d = decideWriteGuard({
+    const d = decideGuard({
       root: fx.root,
       tool: "write",
       input: { filePath: ".secrets/key.txt" },
@@ -376,7 +376,7 @@ describe("🔴 黑名单写拦截（specs §3.1 + §5.6 门控）", () => {
   it("safe-mode ON + 命中 regex ⇒ deny", () => {
     fixture({ marker: true, safeMode: { blacklist: ["regex:\\.env$"] } })
     expect(
-      decideWriteGuard({ root: fx.root, tool: "write", input: { filePath: "config/.env" } }).kind,
+      decideGuard({ root: fx.root, tool: "write", input: { filePath: "config/.env" } }).kind,
     ).toBe("deny")
     fx.setSafeMode(false)
   })
@@ -386,7 +386,7 @@ describe("🔴 黑名单写拦截（specs §3.1 + §5.6 门控）", () => {
       marker: true,
       safeMode: { blacklist: [{ pattern: "vault/", message: "vault is off-limits" }] },
     })
-    const d = decideWriteGuard({ root: fx.root, tool: "write", input: { filePath: "vault/a" } })
+    const d = decideGuard({ root: fx.root, tool: "write", input: { filePath: "vault/a" } })
     expect(d.kind).toBe("deny")
     expect(d.reason).toBe("vault is off-limits")
   })
@@ -394,32 +394,32 @@ describe("🔴 黑名单写拦截（specs §3.1 + §5.6 门控）", () => {
   it("🔴 safe-mode **OFF** ⇒ 黑名单不生效（specs §5.6：黑名单只在 ON 时被宣称生效）", () => {
     fixture({ marker: false, safeMode: { blacklist: [".secrets/"] } })
     expect(
-      decideWriteGuard({ root: fx.root, tool: "write", input: { filePath: ".secrets/key.txt" } }).kind,
+      decideGuard({ root: fx.root, tool: "write", input: { filePath: ".secrets/key.txt" } }).kind,
     ).toBe("allow")
   })
 
   it("🔴 拦的是**写**：read 黑名单内文件放行", () => {
     fixture({ marker: true, safeMode: { blacklist: [".secrets/"] } })
     expect(
-      decideWriteGuard({ root: fx.root, tool: "read", input: { filePath: ".secrets/key.txt" } }).kind,
+      decideGuard({ root: fx.root, tool: "read", input: { filePath: ".secrets/key.txt" } }).kind,
     ).toBe("allow")
   })
 
   it("黑名单为空 ⇒ 不拦任何东西（不误报）", () => {
     fixture({ marker: true, safeMode: { blacklist: [] } })
     expect(
-      decideWriteGuard({ root: fx.root, tool: "write", input: { filePath: "anything.md" } }).kind,
+      decideGuard({ root: fx.root, tool: "write", input: { filePath: "anything.md" } }).kind,
     ).toBe("allow")
   })
 
   it("🔴 container_fs 写子命令也受黑名单约束；只读子命令不受", () => {
     fixture({ marker: true, safeMode: { blacklist: [".secrets/"] } })
     expect(
-      decideWriteGuard({ root: fx.root, tool: "container_fs", input: { action: "touch", path: ".secrets/x" } })
+      decideGuard({ root: fx.root, tool: "container_fs", input: { action: "touch", path: ".secrets/x" } })
         .kind,
     ).toBe("deny")
     expect(
-      decideWriteGuard({ root: fx.root, tool: "container_fs", input: { action: "list", path: ".secrets" } })
+      decideGuard({ root: fx.root, tool: "container_fs", input: { action: "list", path: ".secrets" } })
         .kind,
     ).toBe("allow")
   })
@@ -427,7 +427,7 @@ describe("🔴 黑名单写拦截（specs §3.1 + §5.6 门控）", () => {
   it("配置里没有 safeMode 段 ⇒ 读作 []，不抛", () => {
     fixture({ marker: true, safeMode: undefined })
     expect(
-      decideWriteGuard({ root: fx.root, tool: "write", input: { filePath: "x" } }).kind,
+      decideGuard({ root: fx.root, tool: "write", input: { filePath: "x" } }).kind,
     ).toBe("allow")
   })
 })
@@ -439,7 +439,7 @@ describe("🔴 黑名单写拦截（specs §3.1 + §5.6 门控）", () => {
 describe("🔴 安全模式 bash 禁用（specs §5.6）", () => {
   it("safe-mode ON + bash ⇒ deny", () => {
     fixture({ marker: true })
-    const d = decideWriteGuard({ root: fx.root, tool: "bash", input: { command: "ls" } })
+    const d = decideGuard({ root: fx.root, tool: "bash", input: { command: "ls" } })
     expect(d.kind).toBe("deny")
     expect(d.rule).toBe("shell")
     expect(d.reason).toContain("use msm instead")
@@ -447,7 +447,7 @@ describe("🔴 安全模式 bash 禁用（specs §5.6）", () => {
 
   it("🔴 safe-mode **OFF** ⇒ bash 放行（该声明只在块 6 注入时出现）", () => {
     fixture({ marker: false })
-    expect(decideWriteGuard({ root: fx.root, tool: "bash", input: { command: "ls" } }).kind).toBe(
+    expect(decideGuard({ root: fx.root, tool: "bash", input: { command: "ls" } }).kind).toBe(
       "allow",
     )
   })
@@ -460,14 +460,14 @@ describe("🔴 安全模式 bash 禁用（specs §5.6）", () => {
   it("🔴 拿不到根 ⇒ bash 放行（宁可少拦，不因判据缺失误伤 —— 与治理文件相反）", () => {
     // 治理文件用 basename 判（不依赖根，故无根也拦）；bash 的判据是 safe-mode 标记，
     // 无根 ⇒ 无法得知标记 ⇒ 放行。二者的差别是**刻意的**，不是不一致。
-    expect(decideWriteGuard({ root: null, tool: "bash", input: { command: "ls" } }).kind).toBe("allow")
+    expect(decideGuard({ root: null, tool: "bash", input: { command: "ls" } }).kind).toBe("allow")
   })
 
   it("🔴 bash 判定先于写类闸（bash 无路径参数，放后面会漏）", () => {
     fixture({ marker: true })
     // bash 不在 WRITE_TOOLS 里；若先过写类闸就会被放行
     expect(isWriteCall("bash", { command: "ls" })).toBe(false)
-    expect(decideWriteGuard({ root: fx.root, tool: "bash", input: { command: "ls" } }).kind).toBe("deny")
+    expect(decideGuard({ root: fx.root, tool: "bash", input: { command: "ls" } }).kind).toBe("deny")
   })
 })
 
@@ -507,7 +507,7 @@ describe("🔴 元判据 —— 提示词宣称的保护必须真有实现", () 
         verified: () => {
           const f = fixture({ marker: true })
           return (
-            decideWriteGuard({ root: f.root, tool: "write", input: { filePath: ".serenity" } }).rule ===
+            decideGuard({ root: f.root, tool: "write", input: { filePath: ".serenity" } }).rule ===
             "governance"
           )
         },
@@ -517,7 +517,7 @@ describe("🔴 元判据 —— 提示词宣称的保护必须真有实现", () 
         verified: () => {
           const f = fixture({ marker: true, safeMode: { blacklist: [".secrets/"] } })
           return (
-            decideWriteGuard({
+            decideGuard({
               root: f.root,
               tool: "write",
               input: { filePath: ".secrets/x" },
@@ -529,7 +529,7 @@ describe("🔴 元判据 —— 提示词宣称的保护必须真有实现", () 
         claim: "bash is disabled",
         verified: () => {
           const f = fixture({ marker: true })
-          return decideWriteGuard({ root: f.root, tool: "bash", input: { command: "ls" } }).rule === "shell"
+          return decideGuard({ root: f.root, tool: "bash", input: { command: "ls" } }).rule === "shell"
         },
       },
     ]
